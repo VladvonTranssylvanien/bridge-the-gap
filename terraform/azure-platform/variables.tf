@@ -21,3 +21,9 @@ variable "istio_version" {
   type        = string
   default     = "1.30.3"
 }
+
+variable "spire_trust_domain" {
+  description = "SPIFFE trust domain for the Azure cluster"
+  type        = string
+  default     = "azure.bridgethegap.local"
+}
