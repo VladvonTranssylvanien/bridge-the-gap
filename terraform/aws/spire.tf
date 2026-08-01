@@ -95,3 +95,21 @@ resource "kubernetes_service" "spire_federation" {
 
   depends_on = [helm_release.spire]
 }
+
+resource "kubernetes_manifest" "istio_sidecar_reg" {
+  manifest = {
+    apiVersion = "spire.spiffe.io/v1alpha1"
+    kind       = "ClusterSPIFFEID"
+    metadata = {
+      name = "istio-sidecar-reg"
+    }
+    spec = {
+      podSelector = {
+        matchLabels = {
+          "spiffe.io/spire-managed-identity" = "true"
+        }
+      }
+      spiffeIDTemplate = "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+    }
+  }
+}
