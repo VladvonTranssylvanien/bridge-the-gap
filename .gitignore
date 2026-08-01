@@ -28,3 +28,6 @@ kubeconfig
 # Editors
 .idea/
 .vscode/
+
+# SPIRE federation bootstrap artifacts (one-time manual exchange, not secret but not repo content)
+*.bundle

@@ -45,8 +45,53 @@ resource "helm_release" "spire" {
       "spiffe-oidc-discovery-provider" = {
         enabled = false
       }
+      "spire-server" = {
+        federation = {
+          enabled = true
+        }
+        controllerManager = {
+          identities = {
+            clusterSPIFFEIDs = {
+              default = {
+                federatesWith = ["azure.bridgethegap.local"]
+              }
+            }
+            clusterFederatedTrustDomains = {
+              azure = {
+                bundleEndpointProfile = {
+                  endpointSPIFFEID = "spiffe://azure.bridgethegap.local/spire/server"
+                  type             = "https_spiffe"
+                }
+                bundleEndpointURL = "https://51.105.114.140:8443"
+                trustDomain       = "azure.bridgethegap.local"
+              }
+            }
+          }
+        }
+      }
     })
   ]
 
   depends_on = [helm_release.spire_crds, kubernetes_storage_class.ebs_gp3]
+}
+
+resource "kubernetes_service" "spire_federation" {
+  metadata {
+    name      = "spire-server-federation-lb"
+    namespace = "spire-server"
+  }
+  spec {
+    selector = {
+      "app.kubernetes.io/name"     = "server"
+      "app.kubernetes.io/instance" = "spire"
+    }
+    port {
+      name        = "federation"
+      port        = 8443
+      target_port = 8443
+    }
+    type = "LoadBalancer"
+  }
+
+  depends_on = [helm_release.spire]
 }
