@@ -92,3 +92,38 @@ resource "kubernetes_service" "spire_federation" {
 
   depends_on = [helm_release.spire]
 }
+
+resource "kubernetes_manifest" "istio_sidecar_reg" {
+  manifest = {
+    apiVersion = "spire.spiffe.io/v1alpha1"
+    kind       = "ClusterSPIFFEID"
+    metadata = {
+      name = "istio-sidecar-reg"
+    }
+    spec = {
+      podSelector = {
+        matchLabels = {
+          "spiffe.io/spire-managed-identity" = "true"
+        }
+      }
+      spiffeIDTemplate = "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+    }
+  }
+}
+
+resource "kubernetes_manifest" "istio_ingressgateway_reg" {
+  manifest = {
+    apiVersion = "spire.spiffe.io/v1alpha1"
+    kind       = "ClusterSPIFFEID"
+    metadata = {
+      name = "istio-ingressgateway-reg"
+    }
+    spec = {
+      spiffeIDTemplate = "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+      workloadSelectorTemplates = [
+        "k8s:ns:istio-system",
+        "k8s:sa:istio-ingressgateway",
+      ]
+    }
+  }
+}
