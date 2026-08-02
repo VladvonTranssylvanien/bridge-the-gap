@@ -1,0 +1,11 @@
+apiVersion: v1
+data:
+  policy.rego: "package servicetb.authz\n\nimport future.keywords.if\n\ndefault allow
+    := false\n\n# Explicit allow-list: only service-a's SPIFFE identity, only GET
+    /hello.\n# Everything else (wrong identity, wrong path, wrong method) falls through\n#
+    to the default deny above.\nallow if {\n\tinput.method == \"GET\"\n\tinput.path
+    == \"/hello\"\n\tinput.spiffe_id == \"spiffe://aws.bridgethegap.local/ns/workloads/sa/service-a\"\n}\n"
+kind: ConfigMap
+metadata:
+  name: opa-policy
+  namespace: workloads

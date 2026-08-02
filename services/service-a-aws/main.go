@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spiffe/go-spiffe/v2/spiffeid"
@@ -22,7 +23,7 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
-	serviceBURL := getEnv("SERVICE_B_URL", "https://20.103.67.78:8080/hello")
+	serviceBBaseURL := getEnv("SERVICE_B_BASE_URL", "https://20.103.67.78:8080")
 	serviceBIDStr := getEnv("SERVICE_B_SPIFFE_ID", "spiffe://azure.bridgethegap.local/ns/workloads/sa/service-b")
 
 	ctx := context.Background()
@@ -50,22 +51,36 @@ func main() {
 		Timeout:   10 * time.Second,
 	}
 
-	http.HandleFunc("/call-service-b", func(w http.ResponseWriter, r *http.Request) {
-		resp, err := client.Get(serviceBURL)
+	callServiceB := func(path string) (int, string, error) {
+		url := strings.TrimSuffix(serviceBBaseURL, "/") + path
+		resp, err := client.Get(url)
 		if err != nil {
-			log.Printf("call to service-b failed: %v", err)
+			return 0, "", err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return resp.StatusCode, "", err
+		}
+		return resp.StatusCode, string(body), nil
+	}
+
+	http.HandleFunc("/call-service-b", func(w http.ResponseWriter, r *http.Request) {
+		status, body, err := callServiceB("/hello")
+		if err != nil {
 			http.Error(w, fmt.Sprintf("call to service-b failed: %v", err), http.StatusBadGateway)
 			return
 		}
-		defer resp.Body.Close()
+		fmt.Fprintf(w, "service-b responded (status %d): %s\n", status, body)
+	})
 
-		body, err := io.ReadAll(resp.Body)
+	http.HandleFunc("/call-service-b-admin", func(w http.ResponseWriter, r *http.Request) {
+		status, body, err := callServiceB("/admin")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to read response: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("call to service-b failed: %v", err), http.StatusBadGateway)
 			return
 		}
-
-		fmt.Fprintf(w, "service-b responded (status %d): %s\n", resp.StatusCode, string(body))
+		fmt.Fprintf(w, "service-b responded (status %d): %s\n", status, body)
 	})
 
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

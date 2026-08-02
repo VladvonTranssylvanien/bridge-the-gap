@@ -32,7 +32,7 @@ spec:
       serviceAccountName: service-a
       containers:
         - name: service-a
-          image: 628409561582.dkr.ecr.eu-central-1.amazonaws.com/bridge-the-gap/service-a:v1
+          image: 628409561582.dkr.ecr.eu-central-1.amazonaws.com/bridge-the-gap/service-a:v3
           ports:
             - containerPort: 8080
           env:

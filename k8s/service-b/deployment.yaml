@@ -33,7 +33,7 @@ spec:
       serviceAccountName: service-b
       containers:
         - name: service-b
-          image: acrbridgethegapxdd129.azurecr.io/service-b:v2
+          image: acrbridgethegapxdd129.azurecr.io/service-b:v4
           ports:
             - containerPort: 8080
           env:
@@ -49,11 +49,32 @@ spec:
             - name: spiffe-workload-api
               mountPath: /run/secrets/workload-spiffe-uds
               readOnly: true
+        - name: opa
+          image: openpolicyagent/opa:1.16.2-static
+          args:
+            - "run"
+            - "--server"
+            - "--addr=localhost:8181"
+            - "--set=decision_logs.console=true"
+            - "/policy/policy.rego"
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: opa-policy
+              mountPath: /policy
+              readOnly: true
       volumes:
         - name: spiffe-workload-api
           csi:
             driver: csi.spiffe.io
             readOnly: true
+        - name: opa-policy
+          configMap:
+            name: opa-policy
 ---
 apiVersion: v1
 kind: Service
