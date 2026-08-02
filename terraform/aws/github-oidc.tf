@@ -28,7 +28,7 @@ data "aws_iam_policy_document" "github_actions_assume_role" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:VladvonTranssylvanien/bridge-the-gap:ref:refs/heads/main"]
+      values   = ["repo:VladvonTranssylvanien@105380245/bridge-the-gap@1317683530:ref:refs/heads/main"]
     }
   }
 }

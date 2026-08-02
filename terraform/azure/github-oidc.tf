@@ -12,7 +12,7 @@ resource "azuread_application_federated_identity_credential" "github_actions" {
   description    = "GitHub Actions OIDC, restricted to main branch of bridge-the-gap repo"
   audiences      = ["api://AzureADTokenExchange"]
   issuer         = "https://token.actions.githubusercontent.com"
-  subject        = "repo:VladvonTranssylvanien/bridge-the-gap:ref:refs/heads/main"
+  subject        = "repo:VladvonTranssylvanien@105380245/bridge-the-gap@1317683530:ref:refs/heads/main"
 }
 
 resource "azurerm_role_assignment" "github_actions_acr_push" {
