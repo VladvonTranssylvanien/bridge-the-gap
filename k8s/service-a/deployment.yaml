@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workloads
+  labels:
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: service-a
+  namespace: workloads
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-a
+  namespace: workloads
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: service-a
+  template:
+    metadata:
+      labels:
+        app: service-a
+        spiffe.io/spire-managed-identity: "true"
+      annotations:
+        inject.istio.io/templates: "sidecar,spire"
+    spec:
+      serviceAccountName: service-a
+      containers:
+        - name: service-a
+          image: 628409561582.dkr.ecr.eu-central-1.amazonaws.com/bridge-the-gap/service-a:v1
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: "unix:///run/secrets/workload-spiffe-uds/socket"
+            - name: SERVICE_B_URL
+              value: "https://20.103.67.78:8080/hello"
+            - name: SERVICE_B_SPIFFE_ID
+              value: "spiffe://azure.bridgethegap.local/ns/workloads/sa/service-b"
+          volumeMounts:
+            - name: spiffe-workload-api
+              mountPath: /run/secrets/workload-spiffe-uds
+              readOnly: true
+      volumes:
+        - name: spiffe-workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-a
+  namespace: workloads
+spec:
+  selector:
+    app: service-a
+  ports:
+    - port: 80
+      targetPort: 8080
