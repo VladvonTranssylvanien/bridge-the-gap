@@ -1,0 +1,79 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/aws/**'
+      - 'terraform/azure/**'
+      - '.github/workflows/terraform-plan.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  plan-aws:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_TF_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform fmt check
+        working-directory: terraform/aws
+        run: terraform fmt -check -diff
+
+      - name: Terraform init
+        working-directory: terraform/aws
+        run: terraform init
+
+      - name: Terraform validate
+        working-directory: terraform/aws
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform/aws
+        run: terraform plan -no-color -lock=false
+
+  plan-azure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Azure login via OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform fmt check
+        working-directory: terraform/azure
+        run: terraform fmt -check -diff
+
+      - name: Terraform init
+        working-directory: terraform/azure
+        run: terraform init
+
+      - name: Terraform validate
+        working-directory: terraform/azure
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform/azure
+        env:
+          ARM_USE_CLI: "true"
+        run: terraform plan -no-color -lock=false
