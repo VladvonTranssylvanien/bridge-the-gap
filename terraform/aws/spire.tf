@@ -46,7 +46,7 @@ resource "helm_release" "spire" {
         enabled = false
       }
       "spire-server" = {
-        defaultX509SvidTTL = "10m"
+        defaultX509SvidTTL = "2h"
         federation = {
           enabled = true
         }
