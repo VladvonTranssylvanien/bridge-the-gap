@@ -1,12 +1,47 @@
+<a id="top"></a>
+
+<div align="center">
+
 # Bridge the Gap: Cross-Cloud Workload Identity (AWS to Azure)
 
-Proof-of-concept: a service in AWS calls a service in Azure with no static credentials. Authentication relies entirely on SPIFFE identities issued by SPIRE, and mutual TLS is used for every hop. An OPA-based authorization layer restricts what the AWS service is allowed to do once authenticated.
+**A service in AWS calls a service in Azure with zero static credentials.**
+Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA authorizes it.
+
+![Terraform](https://img.shields.io/badge/IaC-Terraform-844FBA?logo=terraform&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Orchestration-Kubernetes-326CE5?logo=kubernetes&logoColor=white)
+![Istio](https://img.shields.io/badge/Service_Mesh-Istio-466BB0?logo=istio&logoColor=white)
+![SPIFFE/SPIRE](https://img.shields.io/badge/Identity-SPIFFE%2FSPIRE-000000)
+![OPA](https://img.shields.io/badge/Policy-Open_Policy_Agent-7B33E8?logo=openpolicyagent&logoColor=white)
+![AWS](https://img.shields.io/badge/Cloud-AWS-FF9900?logo=amazonaws&logoColor=white)
+![Azure](https://img.shields.io/badge/Cloud-Azure-0078D4?logo=microsoftazure&logoColor=white)
+![Static Credentials](https://img.shields.io/badge/Static_Credentials-Zero-success)
+
+</div>
+
+---
+
+### Contents
+
+- [Architecture](#architecture)
+- [Identities Issued](#identities-issued)
+- [Trust Relationship Between Environments](#trust-relationship-between-environments)
+- [How Authentication Works](#how-authentication-works)
+- [Proof: Successful Authenticated Call](#proof-successful-authenticated-call)
+- [Bonus Challenge 1: Workload Attestation](#bonus-challenge-1-workload-attestation)
+- [Bonus Challenge 2: Authorization Policy](#bonus-challenge-2-authorization-policy)
+- [Bonus Challenge 3: Observability](#bonus-challenge-3-observability)
+- [Challenges Encountered](#challenges-encountered)
+- [Infrastructure Teardown](#infrastructure-teardown)
+
+---
 
 ## Architecture
 
 _(Architecture diagram, Mermaid flowchart, added separately.)_
 
 Both clusters run a full Istio control plane and SPIRE deployment, but the actual Service A → Service B call is **not** proxied by Envoy. That's a deliberate architecture decision, explained under "Why application-level mTLS" below.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Identities Issued
 
@@ -29,11 +64,38 @@ All identities are X.509-SVIDs with short TTLs, rotated automatically by SPIRE. 
 
 Both sides show `FederatesWith: <the other cloud's trust domain>` on every entry. That's SPIRE's own record of the federation relationship, not something asserted only in application code.
 
+<details>
+<summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
+
+```bash
+# AWS
+kubectl config use-context <your-aws-context>
+kubectl exec -n spire-server spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show
+
+# Azure
+kubectl config use-context <your-azure-context>
+kubectl exec -n spire-server spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show
+```
+
+</details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
 ## Trust Relationship Between Environments
 
 **Proof of automatic, periodic bundle refresh** (not a one-time static exchange; this is what makes the trust relationship dynamic rather than a shared secret):
 
 ![SPIRE bundle refresh log evidence, ~75s interval](docs/images/02d-bundle-refresh-evidence.png)
+
+<details>
+<summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
+
+```bash
+kubectl config use-context <your-aws-context>
+kubectl logs -n spire-server spire-server-0 -c spire-server --tail=300 | grep -i "bundle refresh" | tail -5
+```
+
+</details>
 
 Each cloud runs its own independent SPIRE server with its own trust domain and root CA. The two clouds aren't naturally aware of each other. Trust between them is established through **SPIRE Federation**:
 
@@ -43,6 +105,8 @@ Each cloud runs its own independent SPIRE server with its own trust domain and r
 4. After bootstrap, each SPIRE server automatically re-fetches and refreshes the peer's bundle on its own (observed interval: about 75 seconds), so certificate rotation on either side never breaks trust. No manual re-exchange is ever needed again.
 
 The practical effect: Service B's SPIRE server trusts AWS's root CA (and can therefore validate Service A's certificate), and Service A's SPIRE server trusts Azure's root CA, entirely through this dynamic bundle exchange, never through a shared static secret.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## How Authentication Works
 
@@ -60,11 +124,24 @@ The practical effect: Service B's SPIRE server trusts AWS's root CA (and can the
 
 The initial plan was to let Envoy terminate mTLS for this call, using Istio's SPIFFE integration end-to-end. In practice, Istio's SDS-based certificate distribution (via istio-agent) only requests and serves its own fixed trust bundle vocabulary (`default`/`ROOTCA`) and doesn't automatically merge an additional SPIFFE-federated trust domain's CA into Envoy's validation context. That's a genuine integration gap between vanilla Istio sidecar injection and SPIFFE Federation, not a misconfiguration on our side. Fixing it properly would require a custom `EnvoyFilter` with a statically pre-combined CA bundle, which is real production engineering but goes beyond this project's stated scope ("mutual TLS authentication between services", not "Envoy must terminate every hop"). We deliberately descoped that path and instead terminate SPIFFE mTLS natively in the application via `go-spiffe`, which satisfies every stated completion criterion without the added complexity. Istio and its sidecars remain fully deployed and functioning for identity issuance to the mesh's own components. They just aren't the enforcement point for this specific cross-cloud hop.
 
+<p align="right"><a href="#top">back to top ↑</a></p>
+
 ## Proof: Successful Authenticated Call
 
 **The real certificate served by Service B**, extracted directly from the network, not from application code or logs. Note the SPIFFE URI in the Subject Alternative Name and a validity window of about four hours, not months or years:
 
 ![Real SVID certificate: SPIFFE SAN + short validity](docs/images/03-real-svid-certificate.png)
+
+<details>
+<summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
+
+```bash
+echo | openssl s_client -connect <service-b-external-ip>:8080 -showcerts 2>/dev/null \
+  | openssl x509 -noout -text \
+  | grep -A2 "Subject Alternative Name\|Not Before\|Not After"
+```
+
+</details>
 
 Both services also log their own verified SPIFFE identity on startup:
 
@@ -81,9 +158,34 @@ OPA's decision log for those same two requests, showing the actual input evaluat
 
 ![OPA decision log: result=true for /hello, result=false for /admin](docs/images/05-opa-decision-logs.png)
 
+<details>
+<summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
+
+```bash
+kubectl port-forward -n workloads deploy/service-a 18080:8080 &
+curl -s http://localhost:18080/call-service-b
+curl -s http://localhost:18080/call-service-b-admin
+
+kubectl config use-context <your-azure-context>
+kubectl logs -n workloads -l app=service-b -c opa --tail=10
+```
+
+</details>
+
 **Negative test (completion criterion #4):** a client presenting no certificate at all is rejected during the TLS handshake itself, before any HTTP request is even processed. `curl` fails with `SSL routines::tlsv13 alert certificate required`. Identity isn't optional here. The connection can't be established at all without it, let alone reach the authorization layer.
 
 ![Negative test: no client certificate, TLS alert "certificate required"](docs/images/06-negative-test-no-identity.png)
+
+<details>
+<summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
+
+```bash
+curl -v -k https://\<service-b-external-ip\>:8080/hello
+```
+
+</details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Bonus Challenge 1: Workload Attestation
 
@@ -91,22 +193,30 @@ Already covered in detail under "How Authentication Works", steps 1 and 2. In su
 
 This mechanism was chosen over cloud-metadata-based attestation (like AWS/Azure instance identity documents) because it's Kubernetes-native and portable across both clouds with the same logic. The same attestation model applies whether the cluster runs on AWS or Azure, which matters directly for a cross-cloud project. It also ties identity to attributes Kubernetes RBAC already governs (namespace, ServiceAccount), rather than to network-layer facts (IP, hostname) that are ephemeral and, in a compromised-node scenario, potentially attacker-influenced.
 
+<p align="right"><a href="#top">back to top ↑</a></p>
+
 ## Bonus Challenge 2: Authorization Policy
 
 Implemented and verified (see "Proof" above). `/hello` is allowed for `service-a`'s exact SPIFFE identity, `/admin` is denied unconditionally. Enforcement is via an **OPA sidecar** (Policy Decision Point) plus a Go middleware in Service B (Policy Enforcement Point), rather than an Istio `AuthorizationPolicy`. That's a direct consequence of the architecture decision above: Envoy doesn't terminate this port's mTLS, so it can't see the HTTP path to apply an `AuthorizationPolicy` against. That enforcement point would be a structural no-op given how this hop is secured. OPA was chosen specifically because the assignment names it as a valid alternative mechanism to Istio-native authorization.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Bonus Challenge 3: Observability
 
 **Not implemented.** Kiali visualizes mesh traffic by observing what Envoy proxies. Because the authenticated Service A to Service B call deliberately bypasses Envoy interception (`traffic.sidecar.istio.io/excludeInboundPorts`) so the application can terminate SPIFFE mTLS natively, Kiali wouldn't show this specific hop even if deployed. It would only show mTLS between other in-mesh components (sidecar-to-istiod, ingress gateway), which isn't the interesting call for this project. Attempting it would have produced a dashboard that looked like it demonstrated something it didn't. Left out rather than built as a hollow checkbox.
 
+<p align="right"><a href="#top">back to top ↑</a></p>
+
 ## Challenges Encountered
 
 - **SPIRE Federation bootstrap** required understanding the distinction between the one-time manual trust-on-first-use bundle exchange and the ongoing automatic refresh. Easy to conflate the two at first.
-- **Infrastructure drift into raw `kubectl`**: the `ClusterSPIFFEID` registrations were initially applied by hand outside Terraform. Caught and brought under IaC (`terraform import` on Azure, fresh resources on AWS) so the whole platform layer stays declarative.
+- **Infrastructure drift into raw `kubectl`**: the `ClusterSPIFFEID` registrations were initially applied by hand outside Terraform. Caught and brought under IaC (`terraform import` on Azure, fresh resources on AWS) so the whole platform layer stays declarative. Application workloads (Service A/B deployments, the OPA ConfigMap) stay on `kubectl` deliberately, not by oversight: infra changes rarely and belongs in Terraform, workloads change on every image bump and belong in CI/CD instead.
 - **Cross-trust-domain mTLS validation gap in Istio/SPIFFE Federation**: extensively debugged (`remote error: tls: unknown certificate`), root-caused to Istio's SDS proxy not merging federated CA bundles into Envoy's validation context. Explored a full `EnvoyFilter` plus static combined-bundle fix, then deliberately stepped back from it as over-engineering relative to the actual assignment scope, landing on application-level SPIFFE mTLS instead.
 - **Docker image architecture mismatch**: Docker Desktop on Apple Silicon builds `arm64` images by default, but both EKS and AKS nodes run `amd64`, causing `ErrImagePull: no match for platform in manifest`. Fixed by building explicitly with `--platform linux/amd64`.
 - **Terraform drift on Azure**: an externally-injected `created-on` tag (very likely a subscription-level Azure Policy) and an undeclared `default_node_pool.upgrade_settings` block both caused `terraform plan` to show phantom changes on every run. Fixed with a scoped `lifecycle { ignore_changes }` for the tag and by declaring the block's actual default values. `terraform plan` now reports "No changes" on both clouds.
 - **Azure Load Balancer health probes** initially looked like suspicious repeated TLS handshake failures in Service B's logs. Confirmed via node/pod IP correlation that they were the LB's own bare-TCP health check hitting a TLS-only port. Benign, not a security signal.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Infrastructure Teardown
 
@@ -118,3 +228,5 @@ cd terraform/aws && terraform destroy
 ```
 
 Run Azure before AWS if both are torn down in the same session. There's no hard dependency between the two clouds, but Azure's federation bundle endpoint should stop being queried before AWS's SPIRE server is removed, to avoid noisy federation errors during teardown. Cosmetic, not a correctness issue.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
