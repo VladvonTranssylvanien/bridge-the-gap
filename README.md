@@ -23,6 +23,7 @@ Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA autho
 ### Contents
 
 - [Architecture](#architecture)
+- [Completion Criteria](#completion-criteria)
 - [Identities Issued](#identities-issued)
 - [Trust Relationship Between Environments](#trust-relationship-between-environments)
 - [How Authentication Works](#how-authentication-works)
@@ -31,15 +32,60 @@ Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA autho
 - [Bonus Challenge 2: Authorization Policy](#bonus-challenge-2-authorization-policy)
 - [Bonus Challenge 3: Observability](#bonus-challenge-3-observability)
 - [Challenges Encountered](#challenges-encountered)
+- [Additional Negative Test: Identity Spoofing](#additional-negative-test-identity-spoofing)
+- [Post-Delivery Hardening Pass](#post-delivery-hardening-pass)
+- [Known Limitations (Honest Assessment)](#known-limitations-honest-assessment)
 - [Infrastructure Teardown](#infrastructure-teardown)
 
 ---
 
 ## Architecture
 
-_(Architecture diagram, Mermaid flowchart, added separately.)_
+```mermaid
+flowchart TB
+    subgraph AWS["AWS - eu-central-1 (trust domain: aws.bridgethegap.local)"]
+        direction TB
+        subgraph EKS["EKS Cluster (private subnets + NAT Gateway)"]
+            SSA["SPIRE Server"]
+            SAA["SPIRE Agent (DaemonSet)"]
+            SvcA["Service A pod<br/>(go-spiffe client)<br/>+ istio-proxy sidecar"]
+            SSA -->|"issues SVID via Workload API"| SAA
+            SAA -->|"attests pod, delivers SVID"| SvcA
+        end
+    end
 
-Both clusters run a full Istio control plane and SPIRE deployment, but the actual Service A → Service B call is **not** proxied by Envoy. That's a deliberate architecture decision, explained under "Why application-level mTLS" below.
+    subgraph Azure["Azure - West Europe (trust domain: azure.bridgethegap.local)"]
+        direction TB
+        subgraph AKS["AKS Cluster"]
+            SSB["SPIRE Server"]
+            SAB["SPIRE Agent (DaemonSet)"]
+            SvcB["Service B pod<br/>(go-spiffe server)<br/>+ istio-proxy + OPA sidecar"]
+            SSB -->|"issues SVID via Workload API"| SAB
+            SAB -->|"attests pod, delivers SVID"| SvcB
+        end
+    end
+
+    SSA <-->|"SPIRE Federation<br/>bundle exchange, ~75s refresh<br/>via LoadBalancer :8443"| SSB
+
+    SvcA -->|"mTLS (go-spiffe), AuthorizeID pinned<br/>bypasses Envoy interception"| SvcB
+    SvcB -->|"caller SPIFFE ID + path + method"| OPA["OPA sidecar<br/>default-deny Rego policy"]
+    OPA -->|"allow / deny"| SvcB
+```
+
+Both clusters run a full Istio control plane and SPIRE deployment, but the actual Service A to Service B call is **not** proxied by Envoy. That's a deliberate architecture decision, explained under "Why application-level mTLS" below.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+## Completion Criteria
+
+All four completion criteria from the assignment are met, with direct evidence, before anything below this section:
+
+1. **Service A (AWS) successfully calls the Azure service endpoint.** See [Proof: Successful Authenticated Call](#proof-successful-authenticated-call).
+2. **Authentication is performed using workload identity and mTLS.** See [How Authentication Works](#how-authentication-works) and [Identities Issued](#identities-issued).
+3. **No static credentials are stored anywhere.** No API keys, passwords, or long-lived tokens in either cluster. Identities are short-lived X.509-SVIDs fetched on demand via the SPIFFE Workload API. Confirmed at runtime, not just by design: zero `Secret` objects exist in either cluster's `workloads` namespace, and the only volumes mounted into Service A/B are the SPIFFE Workload API socket (ephemeral, SPIRE-rotated) and a ConfigMap holding the OPA policy text.
+4. **If identity verification is disabled or the service lacks the correct identity, the request fails.** Two independent proofs: no client certificate at all is rejected during the TLS handshake (see [Proof](#proof-successful-authenticated-call)), and a valid-but-wrong identity is also rejected during the TLS handshake, before OPA or any application logic runs (see [Additional Negative Test: Identity Spoofing](#additional-negative-test-identity-spoofing)).
+
+Everything from [Additional Negative Test: Identity Spoofing](#additional-negative-test-identity-spoofing) onward goes beyond what the assignment requires: extra verification and a security hardening pass done after the fact, on top of an already-complete deliverable.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
@@ -187,6 +233,40 @@ curl -v -k https://\<service-b-external-ip\>:8080/hello
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
+## Additional Negative Test: Identity Spoofing
+
+> [!NOTE]
+> This test goes beyond the "no client certificate" case already documented above. It proves that mTLS enforcement is based on cryptographic identity (SPIFFE ID bound to a SPIRE-issued SVID), not just "is TLS present."
+
+**Setup**: a workload running under a *different* Kubernetes ServiceAccount in the same `workloads` namespace (so it still receives a valid SPIRE-issued SVID via the default `ClusterSPIFFEID`, just with a different SPIFFE ID than `spiffe://aws.bridgethegap.local/ns/workloads/sa/service-a`) attempts to call Service B directly.
+
+**Expected result**: Service B's `tlsconfig.AuthorizeID(clientID)` pins the TLS handshake to the exact expected SPIFFE ID. A different, valid, SPIRE-issued identity is still rejected — proving the check is identity-based, not merely "any valid SPIRE cert accepted."
+
+<details>
+<summary>Reproduce this test</summary>
+
+A throwaway `imposter-sa` ServiceAccount and a pod using the exact same image, port, environment variables, and SPIFFE Workload API CSI volume as `service-a` were deployed into the `workloads` namespace on the AWS cluster. The default fallback `ClusterSPIFFEID` has no `podSelector`, so SPIRE still issues it a valid SVID, just under a different SPIFFE ID (`spiffe://aws.bridgethegap.local/ns/workloads/sa/imposter-sa`) than the one Service B is pinned to (`spiffe://aws.bridgethegap.local/ns/workloads/sa/service-a`).
+
+```bash
+kubectl apply -f imposter-pod.yaml
+kubectl wait --for=condition=Ready pod/imposter -n workloads --timeout=60s
+kubectl port-forward pod/imposter 8080:8080 -n workloads &
+curl -v -m 15 http://localhost:8080/call-service-b
+```
+
+Actual result:
+
+```
+< HTTP/1.1 502 Bad Gateway
+call to service-b failed: Get "https://<service-b-ip>:8080/hello": remote error: tls: bad certificate
+```
+
+Service B rejected the connection with a `tls: bad certificate` alert during the TLS handshake itself, before the HTTP request was ever processed by the application or OPA. This confirms `tlsconfig.AuthorizeID` enforces the exact expected SPIFFE ID, not merely "any valid SPIRE-issued certificate."
+
+![Identity spoofing test: valid but wrong SPIFFE ID rejected with tls: bad certificate](docs/images/07-identity-spoofing-rejected.png)
+
+</details>
+
 ## Bonus Challenge 1: Workload Attestation
 
 Already covered in detail under "How Authentication Works", steps 1 and 2. In summary: **node attestation** uses `k8s_psat`, and **workload attestation** uses the k8s workload attestor matching namespace, ServiceAccount, and pod labels, driven declaratively by `ClusterSPIFFEID` resources (managed in Terraform, see `terraform/aws/spire.tf` and `terraform/azure/spire.tf`).
@@ -217,6 +297,36 @@ Implemented and verified (see "Proof" above). `/hello` is allowed for `service-a
 - **Azure Load Balancer health probes** initially looked like suspicious repeated TLS handshake failures in Service B's logs. Confirmed via node/pod IP correlation that they were the LB's own bare-TCP health check hitting a TLS-only port. Benign, not a security signal.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
+
+## Post-Delivery Hardening Pass
+
+After the core requirements above were met, a follow-up pass was done to identify and close any additional weak points without changing the stable architecture. Three items were evaluated:
+
+> [!TIP]
+> **Pod `securityContext` hardening — applied.** `service-a`, `service-b`, and their containers were updated with `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `runAsNonRoot: true`, `runAsUser: 65532` (the numeric UID of the distroless `nonroot` user), `seccompProfile.type: RuntimeDefault`, and `capabilities.drop: [ALL]`. Verified live on both clusters (`kubectl get pod -o jsonpath` showing the applied `securityContext`) and functionally (a real authenticated call to `/call-service-b` still returns `200` after the change).
+
+![service-a securityContext: runAsNonRoot, runAsUser 65532, capabilities dropped](docs/images/08a-securitycontext-service-a.png)
+![service-b securityContext: runAsNonRoot, runAsUser 65532, capabilities dropped](docs/images/08b-securitycontext-service-b.png)
+![Authenticated call still returns 200 after hardening applied](docs/images/11-functional-check-post-hardening.png)
+
+> [!WARNING]
+> **Pod Security Admission `restricted` label — evaluated, not applied.** Enabling the `restricted` Pod Security Standard on the `workloads` namespace was tested against the live `istio-init` container injected by classic (non-CNI) sidecar injection. That container runs as root and requires `NET_ADMIN`/`NET_RAW` capabilities to install the iptables redirect rules — both of which `restricted` disallows. Applying this label would have broken every future pod rollout in the namespace. Decision: do not apply, since the assignment explicitly asked to avoid changes that affect stable operation. Documented here as a known gap rather than silently skipped.
+
+![istio-init securityContext: runAsUser 0, capabilities add NET_ADMIN and NET_RAW](docs/images/09-psa-restricted-blocked-evidence.png)
+
+> [!WARNING]
+> **SPIRE agent kubelet certificate verification (`workloadAttestors.k8s.verification.type: auto`) — attempted, reverted.** The current setting (`skip`) does not verify the kubelet's serving certificate when the agent attests workloads, which is a real (if narrow) local-trust gap. Switching to `auto` was tested live on one AWS node; the `gather-host-cert` init container failed because the node's kubelet serving certificate has no `localhost` SAN, blocking `spire-agent` from starting. The failure was contained to a single node (of two), diagnosed with `helm history` / `helm get values` / `helm template`, and fully reverted via `kubectl replace` plus a clean `terraform apply`. Both agents confirmed `1/1 Running` and a real authenticated call confirmed still working before closing this out. Left at `skip` to avoid the instability this introduces on the current kubelet cert setup.
+
+![Both spire-agent pods 1/1 Running on both nodes after revert](docs/images/10-spire-verification-incident-recovery.png)
+
+## Known Limitations (Honest Assessment)
+
+> [!WARNING]
+> **Permissive default identity.** The catch-all `ClusterSPIFFEID` (`spire-server-spire-default`) has `fallback: true` and no `podSelector`, meaning it issues a SPIFFE ID to *any* pod scheduled into a non-system namespace, not just `service-a`/`service-b`. This is a SPIRE chart default, not something introduced by this project, but it is a real reduction in the intended blast radius of workload identity issuance and is called out here rather than left undocumented.
+
+- **No NetworkPolicy is applied** in the `workloads` namespace. Today, all authorization is enforced at the application layer (mTLS identity pinning + OPA), which is correct and sufficient for this assignment, but there is no network-layer deny-by-default backstop. This was evaluated as a possible hardening step and left as documented future work rather than applied, to avoid touching stable networking without a full test pass.
+- **The internal `service-b` ClusterIP Service is not covered** by the `load_balancer_source_ranges` IP allowlist that protects the external LoadBalancer Service (`service-b-azure`). Any pod inside the Azure cluster can reach `service-b` directly on the ClusterIP; the mTLS identity check still applies, but the source-IP restriction does not.
+- **Istio mTLS is enforced at the sidecar/mesh level for in-mesh traffic**, while cross-cloud federated calls between AWS and Azure rely on application-level mTLS via go-spiffe, because Istio's SDS does not natively consume SPIRE's federated bundles across the two independent control planes. This is documented in detail in the "Why application-level mTLS" subsection above; it is repeated here as a limitation for completeness.
 
 ## Infrastructure Teardown
 
