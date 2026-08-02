@@ -4,11 +4,6 @@ variable "aws_region" {
   default     = "eu-central-1"
 }
 
-variable "aws_profile" {
-  description = "AWS CLI profile Terraform authenticates with (see ~/.aws/config)"
-  type        = string
-  default     = "default"
-}
 
 variable "cluster_name" {
   description = "Name of the EKS cluster"
