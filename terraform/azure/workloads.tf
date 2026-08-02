@@ -12,6 +12,6 @@ resource "kubernetes_service" "service_b_external" {
       target_port = 8080
     }
     type                        = "LoadBalancer"
-    load_balancer_source_ranges = ["35.158.254.123/32"]
+    load_balancer_source_ranges = ["18.157.213.89/32"]
   }
 }
