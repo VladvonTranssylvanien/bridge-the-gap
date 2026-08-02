@@ -33,7 +33,8 @@ resource "helm_release" "istiod" {
   values = [
     yamlencode({
       meshConfig = {
-        trustDomain = "azure.bridgethegap.local"
+        trustDomain        = "azure.bridgethegap.local"
+        trustDomainAliases = ["aws.bridgethegap.local"]
       }
       sidecarInjectorWebhook = {
         templates = {
