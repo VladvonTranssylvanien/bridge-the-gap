@@ -27,7 +27,7 @@ spec:
         app: service-a
         spiffe.io/spire-managed-identity: "true"
       annotations:
-        inject.istio.io/templates: "sidecar,spire"
+        inject.istio.io/templates: "sidecar"
     spec:
       serviceAccountName: service-a
       containers:

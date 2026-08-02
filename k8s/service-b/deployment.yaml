@@ -27,7 +27,7 @@ spec:
         app: service-b
         spiffe.io/spire-managed-identity: "true"
       annotations:
-        inject.istio.io/templates: "sidecar,spire"
+        inject.istio.io/templates: "sidecar"
         traffic.sidecar.istio.io/excludeInboundPorts: "8080"
     spec:
       serviceAccountName: service-b
