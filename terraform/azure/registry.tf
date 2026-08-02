@@ -10,6 +10,10 @@ resource "azurerm_container_registry" "main" {
   location            = azurerm_resource_group.main.location
   sku                 = "Basic"
   admin_enabled       = false
+
+  lifecycle {
+    ignore_changes = [tags["created-on"]]
+  }
 }
 
 resource "azurerm_role_assignment" "aks_acr_pull" {

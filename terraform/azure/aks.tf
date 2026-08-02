@@ -9,6 +9,12 @@ resource "azurerm_kubernetes_cluster" "main" {
     node_count     = 1
     vm_size        = "Standard_D2s_v3"
     vnet_subnet_id = azurerm_subnet.aks.id
+
+    upgrade_settings {
+      max_surge                     = "10%"
+      drain_timeout_in_minutes      = 0
+      node_soak_duration_in_minutes = 0
+    }
   }
 
   identity {
@@ -18,5 +24,9 @@ resource "azurerm_kubernetes_cluster" "main" {
   tags = {
     Project   = "bridge-the-gap"
     ManagedBy = "terraform"
+  }
+
+  lifecycle {
+    ignore_changes = [tags["created-on"]]
   }
 }
