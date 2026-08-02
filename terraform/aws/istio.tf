@@ -38,5 +38,33 @@ resource "helm_release" "istiod" {
   namespace  = "istio-system"
   version    = "1.30.3"
 
+  values = [
+    yamlencode({
+      meshConfig = {
+        trustDomain = "aws.bridgethegap.local"
+      }
+      sidecarInjectorWebhook = {
+        templates = {
+          spire = <<-YAMLEOT
+            labels:
+              spiffe.io/spire-managed-identity: "true"
+            spec:
+              initContainers:
+                - name: istio-proxy
+                  volumeMounts:
+                    - name: workload-socket
+                      mountPath: /run/secrets/workload-spiffe-uds
+                      readOnly: true
+              volumes:
+                - name: workload-socket
+                  csi:
+                    driver: csi.spiffe.io
+                    readOnly: true
+          YAMLEOT
+        }
+      }
+    })
+  ]
+
   depends_on = [helm_release.istio_base]
 }
