@@ -49,4 +49,14 @@ resource "azurerm_log_analytics_workspace" "main" {
   resource_group_name = azurerm_resource_group.main.name
   sku                 = "PerGB2018"
   retention_in_days   = 30
+
+  # Something outside Terraform (likely AKS's Container Insights linkage,
+  # not an Azure Policy - none exists on this subscription, confirmed)
+  # keeps re-stamping a "created-on" tag on this workspace. Without this,
+  # every `terraform apply` shows a perpetual, harmless diff trying to
+  # remove it. Scoped to only this one tag key so any other real tag
+  # drift on this resource still surfaces normally.
+  lifecycle {
+    ignore_changes = [tags["created-on"]]
+  }
 }
