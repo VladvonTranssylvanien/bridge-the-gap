@@ -55,10 +55,6 @@ Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA autho
 
 *Two independent Kubernetes clusters (EKS on AWS, AKS on Azure), each running its own SPIRE Server/Agent pair. The two trust domains federate over a dedicated LoadBalancer endpoint (bundle exchange, ~75s), so each side validates the other's workload certificates without a shared root CA.*
 
-![Identity issuance and authorization flow](docs/images/01b-identity-and-authz-flow.jpg)
-
-*Service A's go-spiffe client fetches its SVID from the local SPIRE Agent over the Workload API and pins Service B's exact SPIFFE ID via `AuthorizeID` before the mTLS handshake. On Service B, the caller's SPIFFE ID plus the requested path/method are handed to an OPA sidecar, which returns allow/deny before the request reaches the application handler.*
-
 Both clusters run a full Istio control plane and SPIRE deployment, but the actual Service A to Service B call is **not** proxied by Envoy. That's a deliberate architecture decision, explained under "Why application-level mTLS" below.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
@@ -146,27 +142,9 @@ The practical effect: Service B's SPIRE server trusts AWS's root CA (and can the
 
 ## How Authentication Works
 
-```mermaid
-sequenceDiagram
-    participant Node as EKS/AKS Node
-    participant Agent as SPIRE Agent
-    participant Server as SPIRE Server
-    participant A as Service A (AWS)
-    participant B as Service B (Azure)
-    participant OPA as OPA sidecar
+![Identity issuance and authorization flow](docs/images/01b-identity-and-authz-flow.jpg)
 
-    Node->>Server: k8s_psat node attestation (Projected Service Account Token)
-    Server-->>Agent: node trusted
-    Agent->>Server: workload attestation (namespace, ServiceAccount, pod labels)
-    Server-->>A: short-lived X.509-SVID via Workload API (Unix socket)
-    Server-->>B: short-lived X.509-SVID via Workload API (Unix socket)
-    A->>B: mTLS handshake, AuthorizeID(service-b) pinned
-    B->>A: mTLS handshake, AuthorizeID(service-a) pinned
-    Note over A,B: Handshake fails closed if either ID doesn't match exactly
-    B->>OPA: {spiffe_id, path, method}
-    OPA-->>B: allow / deny (default-deny Rego policy)
-    B-->>A: 200 (/hello) or 403 (/admin)
-```
+*Service A's go-spiffe client fetches its SVID from the local SPIRE Agent over the Workload API and pins Service B's exact SPIFFE ID via `AuthorizeID` before the mTLS handshake. On Service B, the caller's SPIFFE ID plus the requested path/method are handed to an OPA sidecar, which returns allow/deny before the request reaches the application handler.*
 
 **1. Node attestation.** Every SPIRE agent proves to its SPIRE server that it's running on a legitimate node in the cluster, using the `k8s_psat` (Kubernetes Projected Service Account Token) attestor. The node presents a token bound to the Kubernetes API server, which SPIRE validates against the cluster's own token review API. This ties node identity to something Kubernetes itself vouches for, not to network location (IP/hostname), which is spoofable and ephemeral in cloud environments.
 
