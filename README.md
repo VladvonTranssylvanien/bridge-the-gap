@@ -30,7 +30,7 @@ Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA autho
 - [x] Fails closed — missing identity, or a valid-but-wrong identity, is rejected during the TLS handshake itself
 - [x] **Bonus 1** — Workload attestation (Kubernetes-native, `k8s_psat` + workload attestor)
 - [x] **Bonus 2** — Authorization policy (OPA, default-deny, `/hello` allowed / `/admin` denied)
-- [ ] **Bonus 3** — Observability (Kiali) — deliberately not implemented, [reasoning below](#bonus-challenge-3-observability)
+- [x] **Bonus 3** — Observability (Kiali + Prometheus) — architectural limitation empirically confirmed, [details below](#bonus-challenge-3-observability)
 - [x] Post-delivery hardening pass — NetworkPolicy deny-by-default, pod `securityContext`, API server access restricted, SPIRE fallback identity disabled
 
 ### Contents
@@ -92,9 +92,7 @@ All identities are X.509-SVIDs with short TTLs, rotated automatically by SPIRE. 
 
 ![AWS SPIRE registration entries](docs/images/02a-spire-entries-aws.png)
 
-![Azure SPIRE registration entries, part 1](docs/images/02b-spire-entries-azure.png)
-
-![Azure SPIRE registration entries, part 2](docs/images/02c-spire-entries-azure-cont.png)
+![Azure SPIRE registration entries](docs/images/02b-spire-entries-azure.png)
 
 Both sides show `FederatesWith: <the other cloud's trust domain>` on every entry. That's SPIRE's own record of the federation relationship, not something asserted only in application code.
 
@@ -166,7 +164,7 @@ The initial plan was to let Envoy terminate mTLS for this call, using Istio's SP
 
 ## Proof: Successful Authenticated Call
 
-**The real certificate served by Service B**, extracted directly from the network, not from application code or logs. Note the SPIFFE URI in the Subject Alternative Name and a validity window of about two hours (matching `defaultX509SvidTTL = "2h"` in `spire.tf`), not months or years:
+**The real certificate served by Service B**, extracted directly from the network, not from application code or logs. Note the SPIFFE URI in the Subject Alternative Name and a short validity window (currently configured via `defaultX509SvidTTL = "30m"` in `spire.tf`, reduced from an earlier `2h` value), not months or years:
 
 ![Real SVID certificate: SPIFFE SAN + short validity](docs/images/03-real-svid-certificate.png)
 
@@ -210,9 +208,9 @@ kubectl logs -n workloads -l app=service-b -c opa --tail=10
 
 </details>
 
-**Negative test (completion criterion #4):** a client presenting no certificate at all is rejected during the TLS handshake itself, before any HTTP request is even processed. `curl` fails with `SSL routines::tlsv13 alert certificate required`. Identity isn't optional here. The connection can't be established at all without it, let alone reach the authorization layer.
+**Negative test (completion criterion #4):** a client presenting no certificate at all is rejected during the TLS handshake itself, before any HTTP request is even processed. Re-verified live: `curl` consistently fails with `Recv failure: Connection reset by peer`, reproduced identically over both the external LoadBalancer IP and the internal ClusterIP, and independent of TLS version (1.2 forced vs 1.3 default) - ruling out the network path or protocol negotiation as the cause. The rejection is enforced by the application's own mTLS server (`tlsconfig.MTLSServerConfig`, `ClientAuth: RequireAndVerifyClientCert`), not by the network layer. Identity isn't optional here. The connection can't be established at all without it, let alone reach the authorization layer.
 
-![Negative test: no client certificate, TLS alert "certificate required"](docs/images/06-negative-test-no-identity.png)
+![Negative test: no client certificate, connection reset by peer](docs/images/06-negative-test-no-identity.png)
 
 <details>
 <summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
@@ -282,6 +280,8 @@ This mechanism was chosen over cloud-metadata-based attestation (like AWS/Azure 
 
 Implemented and verified (see "Proof" above). `/hello` is allowed for `service-a`'s exact SPIFFE identity, `/admin` is denied unconditionally. Enforcement is via an **OPA sidecar** (Policy Decision Point) plus a Go middleware in Service B (Policy Enforcement Point), rather than an Istio `AuthorizationPolicy`. That's a direct consequence of the architecture decision above: Envoy doesn't terminate this port's mTLS, so it can't see the HTTP path to apply an `AuthorizationPolicy` against. That enforcement point would be a structural no-op given how this hop is secured. OPA was chosen specifically because the assignment names it as a valid alternative mechanism to Istio-native authorization.
 
+![Authorization re-verified: /hello allowed (200), /admin denied (403)](docs/images/18-authz-allow-hello-deny-admin.png)
+
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Bonus Challenge 3: Observability
@@ -329,6 +329,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 | 9 | Local `terraform.tfstate` stored unencrypted | 🔵 Accepted trade-off |
 | 10 | `ClusterSPIFFEID` missing `className`/`federatesWith` (masked until cluster restart) | ✅ Fixed |
 | 11 | Go dependencies pinned via `go.mod`/`go.sum` | ✅ Applied |
+| 12 | `automountServiceAccountToken` disabled on service-a/service-b | ✅ Applied |
+| 13 | `PeerAuthentication` STRICT parity across both clouds | ✅ Applied |
 
 ### 1. Pod `securityContext` hardening
 
@@ -408,6 +410,20 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 > [!TIP]
 > **Applied.** Both `service-a` and `service-b`'s `Dockerfile`s ran `go mod init` + `go get github.com/spiffe/go-spiffe/v2@latest` + `go mod tidy` inside the build itself, with no `go.mod`/`go.sum` committed to the repository — meaning every image build could silently resolve a different dependency version, including transitive ones, with zero diff in git to show it happened. Fixed: generated `go.mod`/`go.sum` for both services (pinning `go-spiffe/v2 v2.8.1` and its full transitive dependency graph via `go.sum` hashes), committed both files, and changed the `Dockerfile`s to `COPY go.mod go.sum ./` followed by `go mod download` instead of resolving `@latest` at build time. Verified: both images rebuild cleanly (`docker build --no-cache`) with the pinned dependency set.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 12. `automountServiceAccountToken` disabled on service-a/service-b
+
+> [!TIP]
+> **Applied.** Kubernetes mounts a ServiceAccount JWT token into every pod by default (`automountServiceAccountToken`, unset means `true`), even when the pod never calls the Kubernetes API. Neither `service-a` nor `service-b` needs this: both only speak SPIFFE mTLS to each other and to OPA, never to the Kubernetes API server. An unused token mounted into the pod is unnecessary attack surface if the container is ever compromised - a stolen token could be replayed against the Kubernetes API. Set `automountServiceAccountToken: false` on both pod specs (`k8s/service-a/deployment.yaml`, `k8s/service-b/deployment.yaml`). Verified on both clusters: `kubectl get pod -o jsonpath='{.spec.automountServiceAccountToken}'` returns `false` on both, and the real cross-cloud authenticated call still returns `200` after the rollout.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 13. `PeerAuthentication` STRICT parity across both clouds
+
+> [!TIP]
+> **Applied.** Auditing Istio's own mesh-level mTLS enforcement (distinct from the application-level SPIFFE mTLS covered above) found two separate gaps. First, the AWS cluster had zero `PeerAuthentication` resources at all - with none defined, Istio defaults to `PERMISSIVE` mode, meaning every sidecar in the mesh would accept both mTLS and plaintext connections. Azure, by contrast, already enforced `STRICT` mesh-wide - but that resource had been applied directly via `kubectl` at some point and was never captured in Terraform, the same "apply but never commit" pattern found elsewhere in this project (see the update under item 4). A rebuild from this repository alone would have silently reproduced Azure's mesh in `PERMISSIVE` mode without anyone noticing. Fixed both: added an explicit `PeerAuthentication` (`istio-system/default`, `mtls.mode: STRICT`) as a `kubernetes_manifest` resource on AWS (`terraform/aws/istio-mtls.tf`), and imported Azure's existing live resource into Terraform state under the same file pattern (`terraform/azure/istio-mtls.tf`). Verified on both clusters: `kubectl get peerauthentication -n istio-system default` returns `STRICT` on both, `terraform plan` shows zero drift, and the real cross-cloud authenticated call still returns `200` after both changes.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
