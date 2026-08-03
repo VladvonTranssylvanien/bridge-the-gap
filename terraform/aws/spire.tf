@@ -51,6 +51,19 @@ resource "helm_release" "spire" {
           enabled = true
         }
         controllerManager = {
+          # Pinned explicitly instead of relying on the chart's implicit
+          # defaults. className defaults to "{Release.Namespace}-{Release.Name}"
+          # ("spire-server-spire" here) when left empty, and watchClassless
+          # defaults to false. Both of our own ClusterSPIFFEID resources
+          # (istio_sidecar_reg, istio_ingressgateway_reg) already hardcode
+          # className = "spire-server-spire" to match. Pinning both values
+          # here removes the implicit coupling: if a future chart upgrade
+          # ever changes either default, our CRs keep reconciling instead of
+          # being silently ignored again (see item 10 in the README's
+          # Security Hardening & Trade-offs section for the incident this
+          # class of bug caused).
+          className      = "spire-server-spire"
+          watchClassless = false
           identities = {
             clusterSPIFFEIDs = {
               # The chart's built-in "default" ClusterSPIFFEID is a catch-all:
@@ -65,6 +78,33 @@ resource "helm_release" "spire" {
               default = {
                 enabled       = false
                 federatesWith = ["azure.bridgethegap.local"]
+              }
+              # None of these chart-shipped identity types are used by this
+              # project (no SPIKE secrets-management components, no OIDC
+              # discovery provider deployment - that subchart is already
+              # disabled above - and no test-keys/child-servers usage). Each
+              # defaults to enabled=true in the chart regardless of whether
+              # the underlying component is deployed, so a real pod never
+              # attests them, but disabling them removes the unused entries
+              # and matches the same "no unused catch-alls" principle as the
+              # disabled "default" fallback above.
+              "oidc-discovery-provider" = {
+                enabled = false
+              }
+              "test-keys" = {
+                enabled = false
+              }
+              "spike-keeper" = {
+                enabled = false
+              }
+              "spike-nexus" = {
+                enabled = false
+              }
+              "spike-bootstrap" = {
+                enabled = false
+              }
+              "spike-pilot" = {
+                enabled = false
               }
             }
             clusterFederatedTrustDomains = {
