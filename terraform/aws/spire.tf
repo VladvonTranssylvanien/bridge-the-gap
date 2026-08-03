@@ -53,7 +53,17 @@ resource "helm_release" "spire" {
         controllerManager = {
           identities = {
             clusterSPIFFEIDs = {
+              # The chart's built-in "default" ClusterSPIFFEID is a catch-all:
+              # podSelector {} (matches every pod) + fallback: true, meaning it
+              # issues an identity to ANY pod in a non-system namespace, not
+              # just service-a. Our actual workloads get their identity from
+              # the dedicated "istio-sidecar-reg" ClusterSPIFFEID below, scoped
+              # to pods labeled spiffe.io/spire-managed-identity=true. Disabling
+              # "default" removes the unused catch-all without affecting
+              # service-a's identity issuance (verified: no other component
+              # depends on the fallback path).
               default = {
+                enabled       = false
                 federatesWith = ["azure.bridgethegap.local"]
               }
             }
@@ -105,12 +115,22 @@ resource "kubernetes_manifest" "istio_sidecar_reg" {
       name = "istio-sidecar-reg"
     }
     spec = {
+      # className scopes this ClusterSPIFFEID to our controller-manager instance.
+      # spire-controller-manager only reconciles CRs whose className matches its
+      # own --class-name flag (see helm values: controllerManager.className).
+      # Without this, the controller silently ignores the CR (no error, no log)
+      # and its GC loop removes any entry it doesn't recognize as its own.
+      className = "spire-server-spire"
       podSelector = {
         matchLabels = {
           "spiffe.io/spire-managed-identity" = "true"
         }
       }
       spiffeIDTemplate = "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+      # federatesWith establishes the cross-cloud trust: this workload's local
+      # spire-agent will fetch and cache the named trust domain's bundle so the
+      # app's go-spiffe X509Source can validate the peer's certificate chain.
+      federatesWith = ["azure.bridgethegap.local"]
     }
   }
 }
