@@ -59,37 +59,6 @@ Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA autho
 
 *Service A's go-spiffe client fetches its SVID from the local SPIRE Agent over the Workload API and pins Service B's exact SPIFFE ID via `AuthorizeID` before the mTLS handshake. On Service B, the caller's SPIFFE ID plus the requested path/method are handed to an OPA sidecar, which returns allow/deny before the request reaches the application handler.*
 
-```mermaid
-flowchart TB
-    subgraph AWS["AWS - eu-central-1 (trust domain: aws.bridgethegap.local)"]
-        direction TB
-        subgraph EKS["EKS Cluster (private subnets + NAT Gateway, API server IP-restricted)"]
-            SSA["SPIRE Server"]
-            SAA["SPIRE Agent (DaemonSet)"]
-            SvcA["Service A pod<br/>(go-spiffe client)<br/>+ istio-proxy sidecar"]
-            SSA -->|"issues SVID via Workload API"| SAA
-            SAA -->|"attests pod, delivers SVID"| SvcA
-        end
-    end
-
-    subgraph Azure["Azure - West Europe (trust domain: azure.bridgethegap.local)"]
-        direction TB
-        subgraph AKS["AKS Cluster (API server IP-restricted)"]
-            SSB["SPIRE Server"]
-            SAB["SPIRE Agent (DaemonSet)"]
-            SvcB["Service B pod<br/>(go-spiffe server)<br/>+ istio-proxy + OPA sidecar"]
-            SSB -->|"issues SVID via Workload API"| SAB
-            SAB -->|"attests pod, delivers SVID"| SvcB
-        end
-    end
-
-    SSA <-->|"SPIRE Federation<br/>bundle exchange, ~75s refresh<br/>via LoadBalancer :8443"| SSB
-
-    SvcA -->|"mTLS (go-spiffe), AuthorizeID pinned<br/>bypasses Envoy interception<br/>NetworkPolicy-scoped"| SvcB
-    SvcB -->|"caller SPIFFE ID + path + method"| OPA["OPA sidecar<br/>default-deny Rego policy"]
-    OPA -->|"allow / deny"| SvcB
-```
-
 Both clusters run a full Istio control plane and SPIRE deployment, but the actual Service A to Service B call is **not** proxied by Envoy. That's a deliberate architecture decision, explained under "Why application-level mTLS" below.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
