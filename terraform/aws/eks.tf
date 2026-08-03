@@ -2,10 +2,19 @@ resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_cluster.arn
 
+  # Public endpoint is restricted to a single admin IP via public_access_cidrs.
+  # Private access is enabled so node <-> control plane traffic never depends
+  # on the public path: once endpoint_private_access = true, EKS creates a
+  # Route53 private hosted zone in the cluster VPC and nodes resolve the API
+  # server to a private IP automatically. No VPN/bastion needed since nodes
+  # already live inside the VPC. Confirmed against AWS docs (cluster-endpoint.html):
+  # "Enabled/Enabled" row -> node-to-control-plane traffic uses the private
+  # VPC endpoint; public_access_cidrs only affects the public endpoint.
   vpc_config {
     subnet_ids              = concat(aws_subnet.public[*].id, aws_subnet.private[*].id)
     endpoint_public_access  = true
-    endpoint_private_access = false
+    endpoint_private_access = true
+    public_access_cidrs     = ["87.149.112.35/32"]
   }
 
   depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]

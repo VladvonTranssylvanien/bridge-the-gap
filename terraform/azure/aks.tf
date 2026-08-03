@@ -4,6 +4,14 @@ resource "azurerm_kubernetes_cluster" "main" {
   resource_group_name = azurerm_resource_group.main.name
   dns_prefix          = var.cluster_name
 
+  # Restrict API server public access to a single admin IP. AKS automatically
+  # allows the Standard LB's own outbound IP in addition to this list, so the
+  # node pool cannot be locked out of its own control plane (confirmed against
+  # Azure docs: api-server-authorized-ip-ranges.md).
+  api_server_access_profile {
+    authorized_ip_ranges = ["87.149.112.35/32"]
+  }
+
   default_node_pool {
     name           = "default"
     node_count     = 2
