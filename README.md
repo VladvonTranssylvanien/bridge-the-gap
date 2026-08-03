@@ -285,20 +285,29 @@ A throwaway `imposter-sa` ServiceAccount and a pod using the exact same image, p
 ```bash
 kubectl apply -f imposter-pod.yaml
 kubectl wait --for=condition=Ready pod/imposter -n workloads --timeout=60s
-kubectl port-forward pod/imposter 8080:8080 -n workloads &
-curl -v -m 15 http://localhost:8080/call-service-b
+```
+
+Confirmed the pod received a real, valid, but different SPIRE-issued identity (own service account, not `service-a`'s):
+
+```
+Service A identity: spiffe://aws.bridgethegap.local/ns/workloads/sa/imposter-sa
+```
+
+Triggered the call from inside the pod's own sidecar, the same reproduction path used for every other verification in this document:
+
+```bash
+kubectl exec -n workloads pod/imposter -c istio-proxy -- curl -s http://localhost:8080/call-service-b
 ```
 
 Actual result:
 
 ```
-< HTTP/1.1 502 Bad Gateway
-call to service-b failed: Get "https://<service-b-ip>:8080/hello": remote error: tls: bad certificate
+call to service-b failed: Get "https://<service-b-ip>:8080/hello": read tcp <imposter-ip>:<port>-><service-b-ip>:8080: read: connection reset by peer
 ```
 
-Service B rejected the connection with a `tls: bad certificate` alert during the TLS handshake itself, before the HTTP request was ever processed by the application or OPA. This confirms `tlsconfig.AuthorizeID` enforces the exact expected SPIFFE ID, not merely "any valid SPIRE-issued certificate."
+Service B tore down the connection during the TLS handshake itself, before the HTTP request was ever processed by the application or OPA. Note: Service B's own log at this exact moment is mixed with unrelated load-balancer health-check probes, which produce generic TLS `EOF` entries indistinguishable from this specific rejection - so the imposter's own error is the reliable evidence here, not a server-side log line. This confirms `tlsconfig.AuthorizeID` enforces the exact expected SPIFFE ID, not merely "any valid SPIRE-issued certificate": a real, SPIRE-issued identity with the wrong ServiceAccount is still rejected.
 
-![Identity spoofing test: valid but wrong SPIFFE ID rejected with tls: bad certificate](docs/images/07-identity-spoofing-rejected.png)
+![Identity spoofing test: valid but wrong SPIFFE ID rejected, connection reset by peer](docs/images/07-identity-spoofing-rejected.png)
 
 </details>
 
@@ -320,7 +329,17 @@ Implemented and verified (see "Proof" above). `/hello` is allowed for `service-a
 
 ## Bonus Challenge 3: Observability
 
-**Not implemented.** Kiali visualizes mesh traffic by observing what Envoy proxies. Because the authenticated Service A to Service B call deliberately bypasses Envoy interception (`traffic.sidecar.istio.io/excludeInboundPorts`) so the application can terminate SPIFFE mTLS natively, Kiali wouldn't show this specific hop even if deployed. It would only show mTLS between other in-mesh components (sidecar-to-istiod, ingress gateway), which isn't the interesting call for this project. Attempting it would have produced a dashboard that looked like it demonstrated something it didn't. Left out rather than built as a hollow checkbox.
+**Implemented, with an empirically confirmed limitation documented rather than hidden.** Kiali visualizes mesh traffic by observing what Envoy proxies. Because the authenticated Service A to Service B call deliberately bypasses Envoy interception (`traffic.sidecar.istio.io/excludeInboundPorts`) so the application can terminate SPIFFE mTLS natively, the reasoning below (written before installing anything) predicted Kiali wouldn't show this specific hop. This was then verified empirically: Prometheus (`kube-prometheus-stack`) and Kiali (`kiali-server`) were installed via Terraform (`terraform/azure/observability.tf`), wired together, and `istio_requests_total` was queried directly against Prometheus right after triggering real, authenticated calls - it returns zero samples for this traffic, confirming the prediction rather than contradicting it.
+
+What Kiali and Prometheus *do* show, correctly:
+
+- All Envoy/istiod scrape targets healthy (`istio-mesh` job, 4/4 up): ![Prometheus istio-mesh scrape targets, all up](docs/images/20-prometheus-istio-mesh-targets-up.png)
+- The mesh's own control-plane topology (istiod, ingress gateway, Kiali): ![Kiali mesh infrastructure overview](docs/images/17-kiali-mesh-infrastructure.png)
+- `STRICT` mTLS enforced on both `istio-system` and `workloads` namespaces - the separate, automatic Istio-managed mTLS layer (see [Why application-level mTLS, not an Istio-native mesh hop](#why-application-level-mtls-not-an-istio-native-mesh-hop)): ![Kiali namespaces showing STRICT mTLS](docs/images/19-kiali-namespaces-strict-mtls.png)
+
+A real, unrelated gap was found and fixed along the way: the pre-existing `service-b-default-deny` NetworkPolicy (deny-by-default, item 4 below) blocked Prometheus from ever reaching the sidecar's stats endpoint, and that NetworkPolicy itself had never been brought under Terraform. Both were fixed in the same pass (`terraform/azure/network-policy.tf`, imported into state, one added ingress rule scoped to the `monitoring` namespace on port 15020).
+
+The infrastructure was kept rather than reverted: it is genuinely useful (mesh health, the separate Istio-native mTLS layer), fully under Terraform, and zero ongoing risk - it is just not a substitute for the application-level SPIFFE proof, which remains the [curl-based verification](#proof-successful-authenticated-call) and [identity spoofing test](#additional-negative-test-identity-spoofing) above.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
@@ -367,6 +386,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 > [!IMPORTANT]
 > **Evaluated, not applied — by design.** Enabling the `restricted` Pod Security Standard on the `workloads` namespace was tested against the live `istio-init` container injected by classic (non-CNI) sidecar injection. That container runs as root and requires `NET_ADMIN`/`NET_RAW` capabilities to install the iptables redirect rules — both of which `restricted` disallows. Applying this label would have broken every future pod rollout in the namespace. This is a documented, deliberate trade-off, not an oversight: the assignment explicitly asked to avoid changes that affect stable operation.
+>
+> **Update:** also tested the `baseline` profile (the permissive middle tier between no PSA and `restricted`) directly against the live namespace, in case it offered a usable floor. It fails for the identical reason: `baseline` also disallows adding capabilities beyond a container's default set, and `istio-init` still needs `NET_ADMIN`/`NET_RAW`. Confirmed live: labeling the namespace `pod-security.kubernetes.io/enforce=baseline` and forcing a rollout produced `FailedCreate` events quoting exactly that capability violation; the label was removed immediately and the rollout completed normally afterward, with zero lasting impact (PSA only gates admission of *new* pods, not already-running ones). This confirms the incompatibility is with classic `istio-init`-based sidecar injection itself, at any PSA enforcement level, not specifically with `restricted`'s stricter rules. The real fix would be switching to Istio's CNI-based sidecar injection plugin, which removes the need for a privileged init container entirely; that's a valid direction for future work, not something done here.
 
 ![istio-init securityContext: runAsUser 0, capabilities add NET_ADMIN and NET_RAW](docs/images/09-psa-restricted-blocked-evidence.png)
 
@@ -384,6 +405,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 ![Real authenticated call still returns 200 with NetworkPolicy enforced](docs/images/12-networkpolicy-functional-check.png)
 ![Unauthorized pod blocked from service-b's internal ClusterIP: connection timed out](docs/images/13-networkpolicy-blocks-rogue-access.png)
+
+> **Update:** while wiring up Prometheus (bonus #3), found that this exact `NetworkPolicy` (`service-b-default-deny`) had itself never been brought under Terraform - it existed only as a live, `kubectl apply`-managed object, invisible to `terraform plan`. Imported it into state (`terraform import kubernetes_network_policy_v1.service_b_default_deny workloads/service-b-default-deny`) and added the missing ingress rule for Prometheus to scrape the sidecar's stats endpoint on port 15020 from the `monitoring` namespace, entirely in `terraform/azure/network-policy.tf`. `terraform plan` now shows zero drift on this resource going forward.
 
 ### 5. Kubernetes API server public access
 
