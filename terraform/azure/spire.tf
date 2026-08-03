@@ -141,7 +141,21 @@ resource "kubernetes_manifest" "istio_ingressgateway_reg" {
       # own --class-name flag (see helm values: controllerManager.className).
       # Without this, the controller silently ignores the CR (no error, no log)
       # and its GC loop removes any entry it doesn't recognize as its own.
-      className        = "spire-server-spire"
+      className = "spire-server-spire"
+      # Without podSelector, this ClusterSPIFFEID has no scoping at all and the
+      # controller reconciles it against every pod in the cluster, stamping the
+      # same workloadSelectorTemplates onto each one regardless of that pod's
+      # real identity. Those mismatched entries turned out to be harmless
+      # (SPIRE requires ALL selectors on an entry to match a workload's real
+      # attested selectors simultaneously, so a pod in the wrong namespace can
+      # never satisfy them - the entries are inert), but they are still noise
+      # and a sign the resource was underspecified. Scoping to the actual
+      # ingress gateway pods via label match is the fix.
+      podSelector = {
+        matchLabels = {
+          app = "istio-ingressgateway"
+        }
+      }
       spiffeIDTemplate = "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
       workloadSelectorTemplates = [
         "k8s:ns:istio-system",
