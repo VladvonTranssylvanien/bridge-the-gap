@@ -51,6 +51,14 @@ Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA autho
 
 ## Architecture
 
+![Cross-cloud architecture overview](docs/images/01-architecture-overview.jpg)
+
+*Two independent Kubernetes clusters (EKS on AWS, AKS on Azure), each running its own SPIRE Server/Agent pair. The two trust domains federate over a dedicated LoadBalancer endpoint (bundle exchange, ~75s), so each side validates the other's workload certificates without a shared root CA.*
+
+![Identity issuance and authorization flow](docs/images/01b-identity-and-authz-flow.jpg)
+
+*Service A's go-spiffe client fetches its SVID from the local SPIRE Agent over the Workload API and pins Service B's exact SPIFFE ID via `AuthorizeID` before the mTLS handshake. On Service B, the caller's SPIFFE ID plus the requested path/method are handed to an OPA sidecar, which returns allow/deny before the request reaches the application handler.*
+
 ```mermaid
 flowchart TB
     subgraph AWS["AWS - eu-central-1 (trust domain: aws.bridgethegap.local)"]
