@@ -2,7 +2,8 @@
 
 <div align="center">
 
-# Bridge the Gap: Cross-Cloud Workload Identity (AWS → Azure)
+# Bridge the Gap: Cross-Cloud Workload Identity 
+(AWS → Azure)
 
 **A service in AWS calls a service in Azure with zero static credentials.**
 Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA authorizes it.
