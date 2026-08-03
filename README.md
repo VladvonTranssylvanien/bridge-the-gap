@@ -209,7 +209,7 @@ The initial plan was to let Envoy terminate mTLS for this call, using Istio's SP
 
 ## Proof: Successful Authenticated Call
 
-**The real certificate served by Service B**, extracted directly from the network, not from application code or logs. Note the SPIFFE URI in the Subject Alternative Name and a validity window of about four hours, not months or years:
+**The real certificate served by Service B**, extracted directly from the network, not from application code or logs. Note the SPIFFE URI in the Subject Alternative Name and a validity window of about two hours (matching `defaultX509SvidTTL = "2h"` in `spire.tf`), not months or years:
 
 ![Real SVID certificate: SPIFFE SAN + short validity](docs/images/03-real-svid-certificate.png)
 
@@ -351,6 +351,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 | 7 | Istio mesh-level vs. application-level mTLS | 🔵 Architectural, accepted |
 | 8 | Hardcoded egress IP in `NetworkPolicy` | 🔵 Accepted trade-off |
 | 9 | Local `terraform.tfstate` stored unencrypted | 🔵 Accepted trade-off |
+| 10 | `ClusterSPIFFEID` missing `className`/`federatesWith` (masked until cluster restart) | ✅ Fixed |
+| 11 | Go dependencies pinned via `go.mod`/`go.sum` | ✅ Applied |
 
 ### 1. Pod `securityContext` hardening
 
@@ -395,6 +397,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 > [!TIP]
 > **Disabled — the unused chart default, not the identities actually in use.** The SPIRE Helm chart ships a built-in `default` `ClusterSPIFFEID` (`spire-server-spire-default`) with `podSelector: {}` and `fallback: true`, meaning it would issue a SPIFFE ID to *any* pod scheduled into a non-system namespace, not just `service-a`/`service-b`. Confirmed neither workload actually depends on it: both get their real identity from the dedicated `istio-sidecar-reg` `ClusterSPIFFEID` (scoped to pods labeled `spiffe.io/spire-managed-identity: "true"`), and Azure's ingress gateway from `istio-ingressgateway-reg` (scoped by namespace/ServiceAccount selector templates). Set `controllerManager.identities.clusterSPIFFEIDs.default.enabled = false` in both `terraform/aws/spire.tf` and `terraform/azure/spire.tf`. Verified on both clusters: `kubectl get clusterspiffeid` no longer lists `spire-server-spire-default`, and the real cross-cloud authenticated call still returns `200`.
+>
+> **Postscript, added after a later incident:** this check was true at the time, but didn't survive a later infrastructure event unrelated to this change. See [item 10](#10-clusterspiffeid-missing-classnamefederateswith-masked-until-cluster-restart) for what actually broke and why.
 
 ![spire-server-spire-default no longer present after disabling the fallback identity](docs/images/16-spire-fallback-identity-disabled.png)
 
@@ -412,6 +416,18 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 > [!NOTE]
 > **Accepted trade-off, a scope decision rather than an oversight.** Neither cloud has a remote Terraform backend configured, so `terraform.tfstate` is written locally, unencrypted, and contains AKS admin credentials in plaintext. The file is git-ignored and never leaves the local machine (verified: `git log --all --full-history` shows no `.tfstate` file was ever committed), but anyone with read access to the machine itself could extract cluster admin credentials from it. The correct production fix is a remote, encrypted backend (S3+KMS, Azure Storage with encryption at rest); standing that up was deliberately descoped here as disproportionate infrastructure change for a stated small proof-of-concept.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 10. `ClusterSPIFFEID` missing `className`/`federatesWith` (masked until cluster restart)
+
+> [!TIP]
+> **Found via a real incident, not a scheduled review — fixed.** After a routine AKS stop/start, `service-b` came back `3/3 Ready` but never bound port 8080. Root cause: `spire-controller-manager` was silently ignoring both `ClusterSPIFFEID` resources we define (`istio-sidecar-reg`, `istio-ingressgateway-reg`) because neither set `.spec.className`, and the controller is configured to skip any CR without one (`handleCRsWithoutClassName: false`) — no error, no log, `spire-server entry show` simply returned zero entries. Fixing that surfaced a second, more serious gap: only the now-disabled fallback catch-all (item 6) had ever had `federatesWith` configured. The real, in-use entries never did. Once `className` was fixed and entries flowed again, `service-a`'s certificate was rejected by `service-b` with `remote error: tls: bad certificate` — the actual cause, from `service-b`'s own logs, was `no X.509 bundle for trust domain "aws.bridgethegap.local"`. In other words, the cross-cloud call had been running on a masked failure mode since the fallback was disabled: it kept working only because SPIRE never needed to re-reconcile the affected entries until this restart forced it to. Fixed by adding `className = "spire-server-spire"` and `federatesWith` (each side listing the other's trust domain) directly to `istio_sidecar_reg` in both `terraform/aws/spire.tf` and `terraform/azure/spire.tf`. Verified: `spire-server entry show` lists live entries with `FederatesWith` populated on both clusters, the real authenticated call returns `200` again, the negative test (no client certificate) is still rejected with `certificate required`, and the `/admin` `AuthorizationPolicy` deny path still returns `403` in OPA's decision log.
+
+### 11. Go dependencies pinned via `go.mod`/`go.sum`
+
+> [!TIP]
+> **Applied.** Both `service-a` and `service-b`'s `Dockerfile`s ran `go mod init` + `go get github.com/spiffe/go-spiffe/v2@latest` + `go mod tidy` inside the build itself, with no `go.mod`/`go.sum` committed to the repository — meaning every image build could silently resolve a different dependency version, including transitive ones, with zero diff in git to show it happened. Fixed: generated `go.mod`/`go.sum` for both services (pinning `go-spiffe/v2 v2.8.1` and its full transitive dependency graph via `go.sum` hashes), committed both files, and changed the `Dockerfile`s to `COPY go.mod go.sum ./` followed by `go mod download` instead of resolving `@latest` at build time. Verified: both images rebuild cleanly (`docker build --no-cache`) with the pinned dependency set.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
