@@ -31,6 +31,12 @@ spec:
         traffic.sidecar.istio.io/excludeInboundPorts: "8080"
     spec:
       serviceAccountName: service-b
+      # Neither this pod's app container nor the OPA sidecar talk to the
+      # Kubernetes API, so there's no use for a mounted ServiceAccount
+      # token. Without this, Kubernetes mounts one by default anyway - a
+      # free credential for anything reading files inside a compromised
+      # container.
+      automountServiceAccountToken: false
       containers:
         - name: service-b
           image: acrbridgethegapxdd129.azurecr.io/service-b:v4

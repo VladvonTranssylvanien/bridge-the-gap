@@ -30,6 +30,11 @@ spec:
         inject.istio.io/templates: "sidecar"
     spec:
       serviceAccountName: service-a
+      # This pod never talks to the Kubernetes API, so it has no use for a
+      # mounted ServiceAccount token. Without this, Kubernetes mounts one by
+      # default anyway - a free credential for anything reading files inside
+      # a compromised container.
+      automountServiceAccountToken: false
       containers:
         - name: service-a
           image: 628409561582.dkr.ecr.eu-central-1.amazonaws.com/bridge-the-gap/service-a:v3
