@@ -12,6 +12,12 @@ resource "azurerm_kubernetes_cluster" "main" {
     authorized_ip_ranges = ["87.149.112.35/32"]
   }
 
+  # Azure Policy add-on for AKS: enforces built-in Kubernetes-native
+  # compliance/security policies (e.g. disallow privileged containers,
+  # require read-only root filesystem) cluster-wide. Was previously
+  # disabled entirely. Single boolean, no node pool disruption.
+  azure_policy_enabled = true
+
   default_node_pool {
     name           = "default"
     node_count     = 2

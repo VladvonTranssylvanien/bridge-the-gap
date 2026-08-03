@@ -2,6 +2,14 @@ resource "aws_eks_cluster" "main" {
   name     = var.cluster_name
   role_arn = aws_iam_role.eks_cluster.arn
 
+  # Control plane audit trail. Was previously off entirely (no api/audit/
+  # authenticator/controllerManager/scheduler logs), meaning there would
+  # have been zero record of who did what against the API server if this
+  # cluster were ever compromised or misused. In-place update, no node
+  # disruption. Logs land in CloudWatch under
+  # /aws/eks/<cluster_name>/cluster.
+  enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+
   # Public endpoint is restricted to a single admin IP via public_access_cidrs.
   # Private access is enabled so node <-> control plane traffic never depends
   # on the public path: once endpoint_private_access = true, EKS creates a
