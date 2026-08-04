@@ -407,9 +407,18 @@ Implemented and verified (see "Proof" above). `/hello` is allowed for `service-a
 
 What Kiali and Prometheus *do* show, correctly:
 
-- All Envoy/istiod scrape targets healthy (`istio-mesh` job, 4/4 up): ![Prometheus istio-mesh scrape targets, all up](docs/images/20-prometheus-istio-mesh-targets-up.png)
-- The mesh's own control-plane topology (istiod, ingress gateway, Kiali): ![Kiali mesh infrastructure overview](docs/images/17-kiali-mesh-infrastructure.png)
-- `STRICT` mTLS enforced on both `istio-system` and `workloads` namespaces - the separate, automatic Istio-managed mTLS layer (see [Why application-level mTLS, not an Istio-native mesh hop](#why-application-level-mtls-not-an-istio-native-mesh-hop)): ![Kiali namespaces showing STRICT mTLS](docs/images/19-kiali-namespaces-strict-mtls.png)
+- All Envoy/istiod scrape targets healthy (`istio-mesh` job, 4/4 up)
+- The mesh's own control-plane topology (istiod, ingress gateway, Kiali)
+- `STRICT` mTLS enforced on both `istio-system` and `workloads` namespaces - the separate, automatic Istio-managed mTLS layer (see [Why application-level mTLS, not an Istio-native mesh hop](#why-application-level-mtls-not-an-istio-native-mesh-hop))
+
+<details>
+<summary>Show 3 screenshots</summary>
+
+![Prometheus istio-mesh scrape targets, all up](docs/images/20-prometheus-istio-mesh-targets-up.png)
+![Kiali mesh infrastructure overview](docs/images/17-kiali-mesh-infrastructure.png)
+![Kiali namespaces showing STRICT mTLS](docs/images/19-kiali-namespaces-strict-mtls.png)
+
+</details>
 
 A real, unrelated gap was found and fixed along the way: the pre-existing `service-b-default-deny` NetworkPolicy (deny-by-default, item 4 below) blocked Prometheus from ever reaching the sidecar's stats endpoint, and that NetworkPolicy itself had never been brought under Terraform. Both were fixed in the same pass (`terraform/azure/network-policy.tf`, imported into state, one added ingress rule scoped to the `monitoring` namespace on port 15020).
 
@@ -599,7 +608,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 
 > [!TIP]
-> **Found via a real incident, not a scheduled review — fixed.** After a routine AKS stop/start, `service-b` came back `3/3 Ready` but never bound port 8080. Root cause: `spire-controller-manager` was silently ignoring both `ClusterSPIFFEID` resources we define (`istio-sidecar-reg`, `istio-ingressgateway-reg`) because neither set `.spec.className`, and the controller is configured to skip any CR without one (`handleCRsWithoutClassName: false`) — no error, no log, `spire-server entry show` simply returned zero entries. Fixing that surfaced a second, more serious gap: only the now-disabled fallback catch-all (item 6) had ever had `federatesWith` configured. The real, in-use entries never did. Once `className` was fixed and entries flowed again, `service-a`'s certificate was rejected by `service-b` with `remote error: tls: bad certificate` — the actual cause, from `service-b`'s own logs, was `no X.509 bundle for trust domain "aws.bridgethegap.local"`. In other words, the cross-cloud call had been running on a masked failure mode since the fallback was disabled: it kept working only because SPIRE never needed to re-reconcile the affected entries until this restart forced it to. Fixed by adding `className = "spire-server-spire"` and `federatesWith` (each side listing the other's trust domain) directly to `istio_sidecar_reg` in both `terraform/aws/spire.tf` and `terraform/azure/spire.tf`. Verified: `spire-server entry show` lists live entries with `FederatesWith` populated on both clusters, the real authenticated call returns `200` again, the negative test (no client certificate) is still rejected with `certificate required`, and the `/admin` `AuthorizationPolicy` deny path still returns `403` in OPA's decision log.
+> **Found via a real incident, not a scheduled review — fixed.** After a routine AKS stop/start, `service-b` came back `3/3 Ready` but never bound port 8080. Root cause: `spire-controller-manager` was silently ignoring both `ClusterSPIFFEID` resources we define (`istio-sidecar-reg`, `istio-ingressgateway-reg`) because neither set `.spec.className`, and the controller is configured to skip any CR without one (`handleCRsWithoutClassName: false`) — no error, no log, `spire-server entry show` simply returned zero entries. Fixing that surfaced a second, more serious gap: only the now-disabled fallback catch-all (item 6) had ever had `federatesWith` configured. The real, in-use entries never did. Once `className` was fixed and entries flowed again, `service-a`'s certificate was rejected by `service-b` with `remote error: tls: bad certificate` — the actual cause, from `service-b`'s own logs, was `no X.509 bundle for trust domain "aws.bridgethegap.local"`. In other words, the cross-cloud call had been running on a masked failure mode since the fallback was disabled: it kept working only because SPIRE never needed to re-reconcile the affected entries until this restart forced it to. Fixed by adding `className = "spire-server-spire"` and `federatesWith` (each side listing the other's trust domain) directly to `istio_sidecar_reg` in both `terraform/aws/spire.tf` and `terraform/azure/spire.tf`. Verified: `spire-server entry show` lists live entries with `FederatesWith` populated on both clusters — the screenshots for that are under [Trust Relationship Between Environments](#trust-relationship-between-environments), since they show the federation working rather than this specific fix, the real authenticated call returns `200` again, the negative test (no client certificate) is still rejected with `certificate required`, and the `/admin` `AuthorizationPolicy` deny path still returns `403` in OPA's decision log.
 
 
 ### 11. Go dependencies pinned via `go.mod`/`go.sum`
