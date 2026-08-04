@@ -405,7 +405,11 @@ After the core requirements above were met, a follow-up pass audited the platfor
 ### 9. Local `terraform.tfstate` stored unencrypted
 
 > [!NOTE]
-> **Accepted trade-off, a scope decision rather than an oversight.** Neither cloud has a remote Terraform backend configured, so `terraform.tfstate` is written locally, unencrypted, and contains AKS admin credentials in plaintext. The file is git-ignored and never leaves the local machine (verified: `git log --all --full-history` shows no `.tfstate` file was ever committed), but anyone with read access to the machine itself could extract cluster admin credentials from it. The correct production fix is a remote, encrypted backend (S3+KMS, Azure Storage with encryption at rest); standing that up was deliberately descoped here as disproportionate infrastructure change for a stated small proof-of-concept.
+> **Originally accepted as a trade-off, later resolved — see [item 20](#20-remote-encrypted-state-backends-with-locking).** Kept here as the original finding rather than rewritten, because the reasoning that led to accepting it is part of the record.
+>
+> **The finding, as first recorded:** neither cloud had a remote Terraform backend configured, so `terraform.tfstate` was written locally, unencrypted, containing AKS admin credentials in plaintext. The file was git-ignored and never left the local machine (verified: `git log --all --full-history` shows no `.tfstate` file was ever committed), but anyone with read access to the machine itself could extract cluster administration from it. The correct fix was named at the time — a remote, encrypted backend — and deliberately descoped as disproportionate infrastructure change for a small proof-of-concept.
+>
+> **Why that judgement was wrong, in hindsight:** the cost of standing up a backend was estimated against the wrong baseline. Doing it up front is roughly ten lines in a `backend` block. It only looked expensive because by then it required a state migration, which is a different and larger task than configuring a backend before the first `apply`. Later inspection also showed the exposure was worse than "AKS admin credentials": the Azure state held `kube_config_raw`, `client_certificate`, `client_key` and `admin_password` — complete cluster administration, not a subset. Both backends were subsequently created and the state migrated and verified; see item 20.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
@@ -449,8 +453,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > Root cause: the `kubernetes_manifest` resources (`istio_sidecar_reg`, `peer_authentication_strict`)
 > require a live connection to the Kubernetes API server at **plan** time, not apply time, and the
 > Kubernetes provider derives its host and token from EKS/AKS cluster attributes. This project has
-> no remote Terraform backend (item 9), so CI starts from empty state, those attributes are unknown,
-> and the provider cannot build a client. No IAM permission can fix that; `plan` was dying before it
+> no remote Terraform backend at the time (item 9, since resolved by item 20), so CI started from empty state, those attributes were unknown, and the provider could not build a client. No IAM permission can fix that; `plan` was dying before it
 > ever reached an AWS API call.
 >
 > Fixed by scoping the workflow to what it can actually validate without state — `terraform fmt`,
@@ -461,9 +464,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > `AROAZEUBA6HXEELVABFKU:GitHubActions`, confirming the role was assumed through OIDC rather than
 > through any stored credential.
 >
-> Real drift detection would require a remote encrypted backend (S3+KMS / Azure Storage), which is
-> the same fix item 9 identifies and the same reason it was descoped. Documented as future work
-> rather than claimed as present.
+> **Superseded in part by [item 20](#20-remote-encrypted-state-backends-with-locking).** When this was fixed, real drift detection was blocked by the absence of a remote backend, and that was recorded here as future work. Remote encrypted backends were subsequently created and the state migrated, so the blocker no longer exists: `terraform plan` in CI could now read real state, resolve the EKS/AKS cluster attributes the Kubernetes provider needs, and detect actual drift. Re-enabling it is not free, and the cost is named rather than glossed over: the plan job would need read access to the state backend plus `Describe*`/`Get*`/`List*` across every service in the configuration, widening the deliberately minimal two-action IAM policy from item 15. That is a reasonable trade for genuine drift detection on a live platform, and not a reasonable one for infrastructure being torn down. Left scoped-to-validate, with the path now unblocked and stated.
 >
 > This is the third instance of the same failure class in this project: a control that exists on
 > paper but is not actually enforcing anything. See item 4 (NetworkPolicy present but the CNI was
@@ -615,8 +616,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > The consequences are concrete. There is no MFA and no conditional access on cluster
 > administration. Actions cannot be attributed to a named human. Access cannot be revoked for one
 > person — the only remedy is rotating the cluster's certificates. And the credential itself is
-> `kube_config_raw` inside `terraform.tfstate`, which item 9 already flags as unencrypted and
-> local: complete cluster administration sitting in a plaintext file.
+> `kube_config_raw` inside Terraform state. That state now lives in a remote encrypted backend with access control (item 20), which narrows where it can be read from but does not change what it is: a single static value granting complete cluster administration to whoever obtains it. Encrypting its storage limits exposure; disabling local accounts would remove the credential's value entirely. This item and item 20 address different halves of the same problem.
 >
 > **The uncomfortable part, stated plainly:** this is a project whose entire premise is that
 > workloads should authenticate by identity rather than by stored secret. That principle was applied
