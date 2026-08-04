@@ -990,14 +990,34 @@ this repository's Terraform.
 
 ## Infrastructure Teardown
 
-Not yet performed. Infrastructure is still up for demonstration purposes. To tear down:
+**Performed. Both clouds are fully destroyed and verified empty.** The commands were:
 
 ```bash
 cd terraform/azure && terraform destroy
 cd terraform/aws && terraform destroy
 ```
 
-Run Azure before AWS if both are torn down in the same session. There's no hard dependency between the two clouds, but Azure's federation bundle endpoint should stop being queried before AWS's SPIRE server is removed, to avoid noisy federation errors during teardown. Cosmetic, not a correctness issue.
+Run Azure before AWS if both are torn down in the same session.
+
+### What teardown itself revealed
+
+Four things surfaced only because the destroy was run and then verified, rather than assumed to have worked.
+
+**An orphan blocked the Azure resource group deletion.** `destroy` failed with the resource group "still contains Resources" — specifically a `Microsoft.OperationsManagement/solutions/ContainerInsights` object. That solution is created as a side effect of the AKS `oms_agent` addon, not by any Terraform resource, so Terraform neither knew about it nor would delete it, and it correctly refused to delete a resource group holding something it does not manage. Deleted manually with `az resource delete --ids`, after which the resource group destroyed cleanly. Worth knowing: enabling an AKS addon can create resources outside your own state.
+
+**The Azure AD application could not be deleted.** `Insufficient privileges to complete the operation`, HTTP 403. Deleting a service principal requires a directory-level role in the tenant, which subscription Owner does not grant. It was removed from Terraform state with `terraform state rm` rather than left as a permanent destroy failure, and verified inert first: `az role assignment list --all --assignee <app-id>` returns nothing, so the registration holds no permission anywhere and its federated credentials point at a repository whose roles no longer exist. It remains in the Cybersteps tenant, harmless, and is named here rather than quietly omitted.
+
+**`kubernetes_manifest` cannot be destroyed without a live cluster.** Once AKS was gone, the remaining `kubernetes_manifest` resources failed with `cannot create REST client: no client config` — the Kubernetes provider derives its connection from cluster attributes that no longer exist. This is the same root cause documented in [item 14](#14-ci-terraform-plan-check-had-never-passed-since-it-was-added), which explains why CI could never run `plan`: that resource type needs API access at plan and destroy time, not only at apply time. The failure mode appears at both ends of a resource's life.
+
+**Two resources survived `destroy` and were found only by looking for them.** Neither appears in any Terraform state, so no `plan` would ever have reported them:
+
+| Orphan | Why it survived |
+|---|---|
+| EBS volume `vol-058a...`, 1 GiB, tagged `spire-data-spire-server-0` | Created by the EBS CSI driver for the SPIRE server's PersistentVolumeClaim, not by Terraform. The PVC went with the cluster; the volume did not. |
+| CloudWatch log group `/aws/eks/bridge-the-gap-aws/cluster`, 61 MB | EKS control-plane logs persist after the cluster is deleted. |
+
+Both cost a few cents per month, which is exactly why they are easy to leave behind forever. A full sweep was run afterwards across EKS clusters, EC2 instances, available EBS volumes, NAT gateways, unassociated Elastic IPs, load balancers, VPCs, ECR repositories, project IAM roles, OIDC providers and log groups. Everything returned zero except the default VPC and the state bucket.
+ There's no hard dependency between the two clouds, but Azure's federation bundle endpoint should stop being queried before AWS's SPIRE server is removed, to avoid noisy federation errors during teardown. Cosmetic, not a correctness issue.
 
 State now lives in the remote backends described in item 20, so `destroy` reads from S3 and Azure Storage rather than from any local file. Two consequences worth knowing before running it:
 
@@ -1014,12 +1034,12 @@ aws s3 rb s3://bridge-the-gap-tfstate-<account-id>
 az group delete -n rg-bridge-the-gap-tfstate --yes
 ```
 
-The pre-migration safety copies taken before the backend migration still exist outside the repository and still contain the full plaintext credential set, including `kube_config_raw`. They were kept deliberately as the rollback path while the migration was being validated. Once teardown is complete they protect nothing, because every credential in them refers to a resource that no longer exists. Delete them as the final step:
+The pre-migration safety copies held the full plaintext credential set, including `kube_config_raw`, and were kept deliberately as the rollback path while the migration was validated. Once teardown completed they protected nothing, because every credential in them referred to a resource that no longer existed. They have been deleted:
 
 ```bash
 rm -rf ~/btg-state-backup-*
 ```
 
-Only after that step is the "no unencrypted state on disk" property from item 20 fully true rather than true going forward.
+With that done, the "no unencrypted state on disk" property from [item 20](#20-remote-encrypted-state-backends-with-locking) is fully true rather than true going forward. Verified afterwards: the only `.tfstate` files remaining for this project are two zero-byte stubs and two `.terraform/terraform.tfstate` backend caches. Those caches list key names such as `access_key`, `client_secret` and `sas_token`, which looks alarming until the values are checked — every one is null, because authentication uses the AWS credential chain and Entra ID rather than static keys. The files contain only the backend pointers already committed in `backend.tf`. Reading the key names alone would have produced a false alarm; reading the values gave the answer.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
