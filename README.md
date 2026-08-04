@@ -994,7 +994,7 @@ cd terraform/azure && terraform destroy
 cd terraform/aws && terraform destroy
 ```
 
-Run Azure before AWS if both are torn down in the same session.There's no hard dependency between the two clouds, but Azure's federation bundle endpoint should stop being queried before AWS's SPIRE server is removed, to avoid noisy federation errors during teardown. Cosmetic, not a correctness issue.
+Run Azure before AWS if both are torn down in the same session. There's no hard dependency between the two clouds, but Azure's federation bundle endpoint should stop being queried before AWS's SPIRE server is removed, to avoid noisy federation errors during teardown. Cosmetic, not a correctness issue.
 
 ### What teardown itself revealed
 
@@ -1018,7 +1018,7 @@ Both cost a few cents per month, which is exactly why they are easy to leave beh
 
 State now lives in the remote backends described in item 20, so `destroy` reads from S3 and Azure Storage rather than from any local file. Two consequences worth knowing, for anyone rebuilding from this repository and tearing it down again:
 
-The state backends are **not** destroyed by these commands, and that is intentional. Both were created manually, outside Terraform, precisely so that a `destroy` cannot delete the state it is reading from. The Azure storage account additionally sits in its own resource group (`rg-bridge-the-gap-tfstate`) rather than in `rg-bridge-the-gap`, which Terraform does manage and does delete. After teardown they hold the final state of a fully destroyed configuration and cost a negligible amount; remove them manually only once nothing further is needed from state history:
+The state backends are **not** destroyed by these commands, and that is intentional. Both were created manually, outside Terraform, precisely so that a `destroy` cannot delete the state it is reading from. The Azure storage account additionally sits in its own resource group (`rg-bridge-the-gap-tfstate`) rather than in `rg-bridge-the-gap`, which Terraform does manage and does delete. Both have since been removed, once nothing further was needed from state history. For anyone rebuilding from this repository, the commands are:
 
 ```bash
 # AWS: empty all object versions first, a versioned bucket cannot be deleted otherwise
