@@ -92,9 +92,17 @@ data "aws_iam_policy_document" "github_actions_plan_assume_role" {
     }
 
     condition {
-      test     = "StringLike"
+      # Exact subjects instead of a ":*" wildcard. The plan workflow only ever
+      # runs on two triggers (see .github/workflows/terraform-plan.yml):
+      # pull_request, and workflow_dispatch from main. A wildcard would also
+      # trust every other ref in the repo (any branch push, any tag), which
+      # this role has no reason to accept.
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:VladvonTranssylvanien@105380245/bridge-the-gap@1317683530:*"]
+      values = [
+        "repo:VladvonTranssylvanien@105380245/bridge-the-gap@1317683530:pull_request",
+        "repo:VladvonTranssylvanien@105380245/bridge-the-gap@1317683530:ref:refs/heads/main",
+      ]
     }
   }
 }
