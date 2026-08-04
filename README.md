@@ -334,6 +334,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 | 13 | `PeerAuthentication` STRICT parity across both clouds | ✅ Applied |
 | 14 | CI `terraform plan` check had never passed since it was added | ✅ Fixed |
 | 15 | CI OIDC role: `:*` subject wildcard and account-wide `ReadOnlyAccess` | ✅ Restricted |
+| 16 | GitHub Actions pinned to mutable version tags | ✅ Pinned to SHA |
 
 ### 1. Pod `securityContext` hardening
 
@@ -496,6 +497,38 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > list, `aws iam get-role-policy` returns only the two-action inline policy, `aws iam get-role`
 > shows the two exact subjects with no `StringLike` condition remaining, and the workflow passes on
 > a real pull request with the reduced permission set.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 16. GitHub Actions pinned to mutable version tags
+
+> [!TIP]
+> **Applied — the same control this project already applied to Go dependencies, missing on the CI
+> layer.** All six actions across the four workflows were referenced by version tag
+> (`actions/checkout@v6`, `aws-actions/configure-aws-credentials@v6`, `azure/login@v3`,
+> `hashicorp/setup-terraform@v3`, `aws-actions/amazon-ecr-login@v2`,
+> `gitleaks/gitleaks-action@v3`). A Git tag is mutable: whoever controls the action's repository
+> can repoint it to a different commit, and every workflow consuming that tag then executes new
+> code with **no diff in this repository to show it happened**.
+>
+> This is the vector behind the `tj-actions/changed-files` compromise of March 2025, where tags
+> were repointed to a commit that dumped runner memory (including secrets) into build logs across
+> tens of thousands of repositories. It is also structurally identical to the problem item 11 fixed
+> by committing `go.mod`/`go.sum`: an unpinned dependency resolved at build time. The same control
+> was applied to the application's dependencies but not to the pipeline that builds them.
+>
+> Fixed by pinning every action to its full-length commit SHA, with the original tag kept as a
+> trailing comment for readability, per GitHub's
+> [Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use), which
+> states the control directly: *pin actions to a full-length commit SHA*. Verified on a real pull
+> request rather than assumed: both `Terraform Validate` and `Secret Scan` pass with the pinned
+> SHAs, confirming each resolves to a working revision.
+>
+> Remaining supply-chain gaps, named rather than silently omitted: the container images carry no
+> SLSA build provenance or signature, there is no SBOM, and dependency updates are manual (the
+> `grpc`/`x/net` CVE bumps in this project's history were found and applied by hand, not by
+> Dependabot). Those are tracked as future work against
+> [SLSA v1.2](https://slsa.dev/spec/v1.2/levels), not claimed as present.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
