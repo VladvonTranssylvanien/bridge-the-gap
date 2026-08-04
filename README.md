@@ -116,9 +116,6 @@ All four completion criteria from the assignment are met, with direct evidence, 
 
 Everything from [Additional Negative Test: Identity Spoofing](#additional-negative-test-identity-spoofing) onward goes beyond what the assignment requires: extra verification and a security hardening pass done after the fact, on top of an already-complete deliverable.
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show 2 screenshots</summary>
 
@@ -126,6 +123,8 @@ Everything from [Additional Negative Test: Identity Spoofing](#additional-negati
 ![evidence](docs/images/24b-final-zero-static-credentials-azure.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Identities Issued
 
@@ -202,9 +201,6 @@ Each cloud runs its own independent SPIRE server with its own trust domain and r
 
 The practical effect: Service B's SPIRE server trusts AWS's root CA (and can therefore validate Service A's certificate), and Service A's SPIRE server trusts Azure's root CA, entirely through this dynamic bundle exchange, never through a shared static secret.
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show 2 screenshots</summary>
 
@@ -212,6 +208,8 @@ The practical effect: Service B's SPIRE server trusts AWS's root CA (and can the
 ![evidence](docs/images/22b-final-platform-health-azure.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## How Authentication Works
 
@@ -312,9 +310,6 @@ curl -v -k https://<service-b-external-ip>:8080/hello
 
 </details>
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show 2 screenshots</summary>
 
@@ -322,6 +317,8 @@ curl -v -k https://<service-b-external-ip>:8080/hello
 ![evidence](docs/images/25a-final-negative-test-no-certificate.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Additional Negative Test: Identity Spoofing
 
@@ -395,15 +392,14 @@ Implemented and verified (see "Proof" above). `/hello` is allowed for `service-a
 </details>
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show screenshot</summary>
 
 ![evidence](docs/images/26-final-authorization-allow-deny.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Bonus Challenge 3: Observability
 
@@ -613,15 +609,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > **Applied.** Both `service-a` and `service-b`'s `Dockerfile`s ran `go mod init` + `go get github.com/spiffe/go-spiffe/v2@latest` + `go mod tidy` inside the build itself, with no `go.mod`/`go.sum` committed to the repository — meaning every image build could silently resolve a different dependency version, including transitive ones, with zero diff in git to show it happened. Fixed: generated `go.mod`/`go.sum` for both services (pinning `go-spiffe/v2 v2.8.1` and its full transitive dependency graph via `go.sum` hashes), committed both files, and changed the `Dockerfile`s to `COPY go.mod go.sum ./` followed by `go mod download` instead of resolving `@latest` at build time. Verified: both images rebuild cleanly (`docker build --no-cache`) with the pinned dependency set.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show screenshot</summary>
 
 ![evidence](docs/images/31-final-go-dependencies-pinned.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 12. `automountServiceAccountToken` disabled on service-a/service-b
 
@@ -671,15 +666,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > `className`). All three were found by verifying rather than by reading.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show screenshot</summary>
 
 ![evidence](docs/images/32-final-ci-workflow-passing.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 15. CI OIDC role: `:*` subject wildcard and account-wide `ReadOnlyAccess`
 
@@ -713,9 +707,6 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > a real pull request with the reduced permission set.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show 2 screenshots</summary>
 
@@ -723,6 +714,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 ![evidence](docs/images/28b-final-cicd-oidc-trust-condition.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 16. GitHub Actions pinned to mutable version tags
 
@@ -756,15 +749,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > [SLSA v1.2](https://slsa.dev/spec/v1.2/levels), not claimed as present.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show screenshot</summary>
 
 ![evidence](docs/images/28c-final-cicd-actions-pinned-to-sha.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 17. AKS control-plane audit logging absent entirely
 
@@ -798,9 +790,6 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > ingestion works; this does.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show 2 screenshots</summary>
 
@@ -808,6 +797,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 ![evidence](docs/images/29b-final-aks-audit-logging-canary.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 18. Two public LoadBalancers with no source restriction
 
@@ -844,15 +835,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > the internet is blocked, not assumed.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show screenshot</summary>
 
 ![evidence](docs/images/27-final-defense-layers.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 19. AKS authenticates via local accounts, no Entra ID
 
@@ -886,15 +876,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > default.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show screenshot</summary>
 
 ![evidence](docs/images/33-final-aks-no-entra-id.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 20. Remote encrypted state backends with locking
 
@@ -952,9 +941,6 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > and there is nothing to migrate or clean up later.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
-
 <details>
 <summary>Show 2 screenshots</summary>
 
@@ -962,6 +948,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 ![evidence](docs/images/30b-final-state-migration-verified.png)
 
 </details>
+
+<p align="right"><a href="#top">back to top ↑</a></p>
 
 ## Live Resource Inventory
 
@@ -997,7 +985,7 @@ cd terraform/azure && terraform destroy
 cd terraform/aws && terraform destroy
 ```
 
-Run Azure before AWS if both are torn down in the same session.
+Run Azure before AWS if both are torn down in the same session.There's no hard dependency between the two clouds, but Azure's federation bundle endpoint should stop being queried before AWS's SPIRE server is removed, to avoid noisy federation errors during teardown. Cosmetic, not a correctness issue.
 
 ### What teardown itself revealed
 
@@ -1017,9 +1005,9 @@ Four things surfaced only because the destroy was run and then verified, rather 
 | CloudWatch log group `/aws/eks/bridge-the-gap-aws/cluster`, 61 MB | EKS control-plane logs persist after the cluster is deleted. |
 
 Both cost a few cents per month, which is exactly why they are easy to leave behind forever. A full sweep was run afterwards across EKS clusters, EC2 instances, available EBS volumes, NAT gateways, unassociated Elastic IPs, load balancers, VPCs, ECR repositories, project IAM roles, OIDC providers and log groups. Everything returned zero except the default VPC and the state bucket.
- There's no hard dependency between the two clouds, but Azure's federation bundle endpoint should stop being queried before AWS's SPIRE server is removed, to avoid noisy federation errors during teardown. Cosmetic, not a correctness issue.
 
-State now lives in the remote backends described in item 20, so `destroy` reads from S3 and Azure Storage rather than from any local file. Two consequences worth knowing before running it:
+
+State now lives in the remote backends described in item 20, so `destroy` reads from S3 and Azure Storage rather than from any local file. Two consequences worth knowing, for anyone rebuilding from this repository and tearing it down again:
 
 The state backends are **not** destroyed by these commands, and that is intentional. Both were created manually, outside Terraform, precisely so that a `destroy` cannot delete the state it is reading from. The Azure storage account additionally sits in its own resource group (`rg-bridge-the-gap-tfstate`) rather than in `rg-bridge-the-gap`, which Terraform does manage and does delete. After teardown they hold the final state of a fully destroyed configuration and cost a negligible amount; remove them manually only once nothing further is needed from state history:
 
