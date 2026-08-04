@@ -56,7 +56,7 @@ the repository and enforced nothing.
 
 | Question | Where |
 |---|---|
-| Does it actually work? | [Final Verification](#final-verification) — 89 live checks, both clouds |
+| Does it actually work? | [Live Resource Inventory](#live-resource-inventory) — 89 live checks, both clouds |
 | How does authentication work? | [How Authentication Works](#how-authentication-works) |
 | Where is the proof? | [Proof: Successful Authenticated Call](#proof-successful-authenticated-call) |
 | What happens without a valid identity? | [Identity Spoofing test](#additional-negative-test-identity-spoofing) |
@@ -89,19 +89,15 @@ the repository and enforced nothing.
 - [Bonus Challenge 3: Observability](#bonus-challenge-3-observability)
 - [Challenges Encountered](#challenges-encountered)
 - [Security Hardening & Trade-offs](#security-hardening--trade-offs)
-- [Final Verification](#final-verification)
+- [Live Resource Inventory](#live-resource-inventory)
 - [Infrastructure Teardown](#infrastructure-teardown)
 
 ---
 
 ## Architecture
 
-<details>
-<summary>Show screenshot</summary>
-
 ![Cross-cloud architecture overview](docs/images/01-architecture-overview.jpg)
 
-</details>
 
 
 *Two independent Kubernetes clusters (EKS on AWS, AKS on Azure), each running its own SPIRE Server/Agent pair. The two trust domains federate over a dedicated LoadBalancer endpoint (bundle exchange, ~75s), so each side validates the other's workload certificates without a shared root CA.*
@@ -122,6 +118,15 @@ All four completion criteria from the assignment are met, with direct evidence, 
 Everything from [Additional Negative Test: Identity Spoofing](#additional-negative-test-identity-spoofing) onward goes beyond what the assignment requires: extra verification and a security hardening pass done after the fact, on top of an already-complete deliverable.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
+
+
+<details>
+<summary>Show 2 screenshots</summary>
+
+![evidence](docs/images/24a-final-zero-static-credentials-aws.png)
+![evidence](docs/images/24b-final-zero-static-credentials-azure.png)
+
+</details>
 
 ## Identities Issued
 
@@ -200,14 +205,19 @@ The practical effect: Service B's SPIRE server trusts AWS's root CA (and can the
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
-## How Authentication Works
 
 <details>
-<summary>Show screenshot</summary>
+<summary>Show 2 screenshots</summary>
+
+![evidence](docs/images/22a-final-platform-health-aws.png)
+![evidence](docs/images/22b-final-platform-health-azure.png)
+
+</details>
+
+## How Authentication Works
 
 ![Identity issuance and authorization flow](docs/images/01b-identity-and-authz-flow.jpg)
 
-</details>
 
 
 *Service A's go-spiffe client fetches its SVID from the local SPIRE Agent over the Workload API and pins Service B's exact SPIFFE ID via `AuthorizeID` before the mTLS handshake. On Service B, the caller's SPIFFE ID plus the requested path/method are handed to an OPA sidecar, which returns allow/deny before the request reaches the application handler.*
@@ -313,6 +323,15 @@ curl -v -k https://\<service-b-external-ip\>:8080/hello
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
+
+<details>
+<summary>Show 2 screenshots</summary>
+
+![evidence](docs/images/23-final-authenticated-call-identities.png)
+![evidence](docs/images/25a-final-negative-test-no-certificate.png)
+
+</details>
+
 ## Additional Negative Test: Identity Spoofing
 
 > [!NOTE]
@@ -364,6 +383,14 @@ Service B tore down the connection during the TLS handshake itself, before the H
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
+
+<details>
+<summary>Show screenshot</summary>
+
+![evidence](docs/images/25b-final-negative-test-identity-spoofing.png)
+
+</details>
+
 ## Bonus Challenge 1: Workload Attestation
 
 Already covered in detail under "How Authentication Works", steps 1 and 2. In summary: **node attestation** uses `k8s_psat`, and **workload attestation** uses the k8s workload attestor matching namespace, ServiceAccount, and pod labels, driven declaratively by `ClusterSPIFFEID` resources (managed in Terraform, see `terraform/aws/spire.tf` and `terraform/azure/spire.tf`).
@@ -385,6 +412,14 @@ Implemented and verified (see "Proof" above). `/hello` is allowed for `service-a
 
 
 <p align="right"><a href="#top">back to top ↑</a></p>
+
+
+<details>
+<summary>Show screenshot</summary>
+
+![evidence](docs/images/26-final-authorization-allow-deny.png)
+
+</details>
 
 ## Bonus Challenge 3: Observability
 
@@ -613,6 +648,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
+
+<details>
+<summary>Show screenshot</summary>
+
+![evidence](docs/images/31-final-go-dependencies-pinned.png)
+
+</details>
+
 ### 12. `automountServiceAccountToken` disabled on service-a/service-b
 
 
@@ -670,6 +713,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
+
+<details>
+<summary>Show screenshot</summary>
+
+![evidence](docs/images/32-final-ci-workflow-passing.png)
+
+</details>
+
 ### 15. CI OIDC role: `:*` subject wildcard and account-wide `ReadOnlyAccess`
 
 
@@ -704,6 +755,15 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 
 <p align="right"><a href="#top">back to top ↑</a></p>
+
+
+<details>
+<summary>Show 2 screenshots</summary>
+
+![evidence](docs/images/28a-final-cicd-oidc-permissions.png)
+![evidence](docs/images/28b-final-cicd-oidc-trust-condition.png)
+
+</details>
 
 ### 16. GitHub Actions pinned to mutable version tags
 
@@ -740,6 +800,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
+
+<details>
+<summary>Show screenshot</summary>
+
+![evidence](docs/images/28c-final-cicd-actions-pinned-to-sha.png)
+
+</details>
+
 ### 17. AKS control-plane audit logging absent entirely
 
 
@@ -774,6 +842,15 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 
 <p align="right"><a href="#top">back to top ↑</a></p>
+
+
+<details>
+<summary>Show 2 screenshots</summary>
+
+![evidence](docs/images/29a-final-aks-audit-logging-config.png)
+![evidence](docs/images/29b-final-aks-audit-logging-canary.png)
+
+</details>
 
 ### 18. Two public LoadBalancers with no source restriction
 
@@ -813,6 +890,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
+
+<details>
+<summary>Show screenshot</summary>
+
+![evidence](docs/images/27-final-defense-layers.png)
+
+</details>
+
 ### 19. AKS authenticates via local accounts, no Entra ID
 
 
@@ -847,6 +932,14 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 
 <p align="right"><a href="#top">back to top ↑</a></p>
+
+
+<details>
+<summary>Show screenshot</summary>
+
+![evidence](docs/images/33-final-aks-no-entra-id.png)
+
+</details>
 
 ### 20. Remote encrypted state backends with locking
 
@@ -907,295 +1000,37 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
-## Final Verification
-
-Everything above was verified at the time it was written. This section re-verifies the whole
-platform in a single pass, at one point in time, after the last change was applied. The point is
-not to restate earlier proofs but to establish that every control is simultaneously active and that
-the cross-cloud call still works with all of them enforced.
-
-### Resource inventory, checked against the live cloud
-
-
-Not read from Terraform state, which only records what Terraform believes exists. Each resource was
-queried through the cloud provider's own API or the Kubernetes API. Terraform state holds 51 AWS and
-29 Azure resources; the checks below cover all of them.
-
-**AWS**
-
-<details>
-<summary>Show 3 screenshots</summary>
-
-![AWS inventory: networking and cluster](docs/images/21a-final-inventory-aws-network-cluster.png)
-![AWS inventory: identity and registry](docs/images/21b-final-inventory-aws-identity-registry.png)
-![AWS inventory: platform and mesh policy](docs/images/21c-final-inventory-aws-platform-policy.png)
-
-</details>
-
-
-**Azure**
 
 <details>
 <summary>Show 2 screenshots</summary>
 
-![Azure inventory: core infrastructure](docs/images/21d-final-inventory-azure-core.png)
-![Azure inventory: identity and access](docs/images/21e-final-inventory-azure-identity.png)
+![evidence](docs/images/30a-final-remote-state-backends.png)
+![evidence](docs/images/30b-final-state-migration-verified.png)
 
 </details>
 
+## Live Resource Inventory
 
-Cluster-level summary for both clouds, including Kubernetes versions, node instance types and
-Terraform-managed resource counts:
-
-<details>
-<summary>Show screenshot</summary>
-
-![Both clusters: version, status, nodes, resource counts](docs/images/21-final-infrastructure-inventory.png)
-
-</details>
-
+Every resource in both clouds, verified against the cloud provider's own API and the Kubernetes API
+rather than read from Terraform state, which only records what Terraform believes exists. Terraform
+state holds 51 AWS and 29 Azure resources; the checks below cover all of them, in one pass.
 
 Two things in that inventory are deliberately absent rather than broken. AWS runs no Istio ingress
-gateway: only Azure has one, and it is not in the call path (see the Identities Issued table). And
-the two `aks-managed-*` Helm releases visible on the Azure cluster are excluded from the count
-because they ship with AKS add-ons rather than from this repository's Terraform.
-
-
-
-### Platform health and federated trust
-
-
-Both SPIRE servers issuing entries with `FederatesWith` populated, and the periodic bundle exchange
-running in both directions at roughly 75-second intervals. This is what makes the trust relationship
-dynamic rather than a one-time shared secret.
+gateway: only Azure has one, and it is not in the call path. And the two `aks-managed-*` Helm releases
+on the Azure cluster are excluded from the count because they ship with AKS add-ons rather than from
+this repository's Terraform.
 
 <details>
-<summary>Show 2 screenshots</summary>
+<summary>Show 6 screenshots</summary>
 
-![AWS: pods, SPIRE entries, bundle refresh from Azure](docs/images/22a-final-platform-health-aws.png)
-![Azure: pods, SPIRE entries, bundle refresh from AWS](docs/images/22b-final-platform-health-azure.png)
-
-</details>
-
-
-
-
-### The four completion criteria, re-verified
-
-
-**Criteria 1 and 2** — each service's own verified SPIFFE identity from its startup logs, the
-certificate Service B actually serves on the wire, and the authenticated call itself:
-
-<details>
-<summary>Show screenshot</summary>
-
-![Identities, served certificate, and the authenticated call](docs/images/23-final-authenticated-call-identities.png)
+![evidence](docs/images/21a-final-inventory-aws-network-cluster.png)
+![evidence](docs/images/21b-final-inventory-aws-identity-registry.png)
+![evidence](docs/images/21c-final-inventory-aws-platform-policy.png)
+![evidence](docs/images/21d-final-inventory-azure-core.png)
+![evidence](docs/images/21e-final-inventory-azure-identity.png)
+![evidence](docs/images/21-final-infrastructure-inventory.png)
 
 </details>
-
-
-**Criterion 3** — no static credentials. Zero `Secret` objects in either `workloads` namespace, and
-the only volumes mounted into either service are the SPIFFE Workload API socket (ephemeral,
-SPIRE-rotated) and a ConfigMap holding OPA policy text. `automountServiceAccountToken` is disabled
-on both, and SVIDs carry a 30-minute TTL:
-
-<details>
-<summary>Show 2 screenshots</summary>
-
-![AWS: no Secrets, only SPIFFE socket mounted](docs/images/24a-final-zero-static-credentials-aws.png)
-![Azure: no Secrets, SPIFFE socket and OPA ConfigMap only](docs/images/24b-final-zero-static-credentials-azure.png)
-
-</details>
-
-
-**Criterion 4** — fails closed, proven two independent ways.
-
-A client presenting no certificate at all. The `Request CERT (13)` line is the server's TLS 1.3
-`CertificateRequest`: Service B is demanding a client certificate, not merely offering TLS. The
-client answers with an empty `Certificate (11)` and the connection is terminated with no HTTP status
-returned at all. This is stronger evidence than an opaque connection reset, because it names the
-exact protocol message where identity is required:
-
-<details>
-<summary>Show screenshot</summary>
-
-![TLS 1.3 handshake showing Request CERT and termination](docs/images/25a-final-negative-test-no-certificate.png)
-
-</details>
-
-
-A client presenting a certificate that is valid and SPIRE-issued, but carries the wrong identity.
-The imposter runs the same container image against the same target, differing only in its Kubernetes
-ServiceAccount, so it receives a legitimate SVID for `.../sa/imposter-sa`. It is still rejected,
-which proves enforcement is bound to cryptographic identity rather than to the mere presence of TLS:
-
-<details>
-<summary>Show screenshot</summary>
-
-![Imposter with valid but wrong SPIFFE ID, rejected](docs/images/25b-final-negative-test-identity-spoofing.png)
-
-</details>
-
-
-
-
-### Authorization
-
-
-The same authenticated identity, two paths, two outcomes. Passing the handshake proves who is
-calling; it does not decide what they may do:
-
-<details>
-<summary>Show screenshot</summary>
-
-![GET /hello allowed 200, GET /admin denied 403](docs/images/26-final-authorization-allow-deny.png)
-
-</details>
-
-
-
-
-### Defence layers, all active at once
-
-
-LoadBalancer source ranges restricted to the AWS NAT Gateway EIP only, Istio `PeerAuthentication`
-STRICT on both clusters, `NetworkPolicy` deny-by-default on both workloads, and this machine's own
-public IP deliberately outside every allowlist:
-
-<details>
-<summary>Show screenshot</summary>
-
-![LB source ranges, PeerAuthentication, NetworkPolicy](docs/images/27-final-defense-layers.png)
-
-</details>
-
-
-
-
-### Supply chain and CI/CD
-
-
-The `terraform-plan` OIDC role with no managed policies attached and an inline policy containing
-exactly the two actions `plan` needs, and a trust condition using exact subjects with no `StringLike`
-wildcard:
-
-<details>
-<summary>Show 2 screenshots</summary>
-
-![OIDC role: no managed policies, two-action inline policy](docs/images/28a-final-cicd-oidc-permissions.png)
-![OIDC role: exact trust subjects, no wildcard](docs/images/28b-final-cicd-oidc-trust-condition.png)
-
-</details>
-
-
-Every GitHub Action across all four workflows pinned to a full-length commit SHA, with zero mutable
-tag references remaining:
-
-<details>
-<summary>Show screenshot</summary>
-
-![All actions pinned to commit SHAs](docs/images/28c-final-cicd-actions-pinned-to-sha.png)
-
-</details>
-
-
-Go dependencies committed and locked by hash rather than resolved at build time:
-
-<details>
-<summary>Show screenshot</summary>
-
-![go.mod and go.sum committed, no @latest in Dockerfile](docs/images/31-final-go-dependencies-pinned.png)
-
-</details>
-
-
-The CI workflow's full run history. The failures are every run that existed before the fix in item
-14, when the check was present in the repository and validated nothing. The current run proves OIDC
-federation works with no stored credential:
-
-<details>
-<summary>Show screenshot</summary>
-
-![Workflow history: three failures, then success](docs/images/32-final-ci-workflow-passing.png)
-
-</details>
-
-
-
-
-### Audit logging
-
-
-The diagnostic setting on the AKS cluster with three log categories enabled. Before it existed, the
-same command returned an empty array:
-
-<details>
-<summary>Show screenshot</summary>
-
-![AKS diagnostic setting with three categories](docs/images/29a-final-aks-audit-logging-config.png)
-
-</details>
-
-
-And the proof it delivers data rather than merely existing. A ConfigMap was deliberately created and
-immediately deleted; two `kube-audit-admin` records came back from Log Analytics matching both
-operations:
-
-<details>
-<summary>Show screenshot</summary>
-
-![KQL query returning the audit canary records](docs/images/29b-final-aks-audit-logging-canary.png)
-
-</details>
-
-
-
-
-### State backends
-
-
-Both backends with versioning, encryption at rest, and the state object present and server-side
-encrypted:
-
-<details>
-<summary>Show screenshot</summary>
-
-![S3 and Azure Storage backend configuration and state objects](docs/images/30a-final-remote-state-backends.png)
-
-</details>
-
-
-Local state files truncated to zero bytes, resource counts read from the remote backends, and
-`terraform plan` returning "No changes" against live infrastructure from remote state on both
-clouds:
-
-<details>
-<summary>Show screenshot</summary>
-
-![Local state emptied, plan clean from remote state](docs/images/30b-final-state-migration-verified.png)
-
-</details>
-
-
-
-
-### The one finding left open
-
-
-AKS authentication configuration as it stands, recorded rather than fixed for the reasons given in
-item 19. `aadProfile: null` means Entra ID is not in the authentication path at all, and
-`disableLocalAccounts: false` means a local client certificate grants access. RBAC is enabled, but
-the admin kubeconfig maps to `system:masters`, which bypasses it:
-
-<details>
-<summary>Show screenshot</summary>
-
-![AKS: no Entra integration, local accounts enabled](docs/images/33-final-aks-no-entra-id.png)
-
-</details>
-
-
-
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
