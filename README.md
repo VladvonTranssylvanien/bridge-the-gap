@@ -240,14 +240,10 @@ The initial plan was to let Envoy terminate mTLS for this call, using Istio's SP
 
 ## Proof: Successful Authenticated Call
 
-**The real certificate served by Service B**, extracted directly from the network, not from application code or logs. Note the SPIFFE URI in the Subject Alternative Name and a short validity window (currently configured via `defaultX509SvidTTL = "30m"` in `spire.tf`, reduced from an earlier `2h` value), not months or years:
+**The certificate Service B actually serves**, extracted from the network rather than read out of application code or logs, is captured further down this section together with both service identities and the authenticated call itself. Note the SPIFFE URI in its Subject Alternative Name, and a validity window of thirty minutes rather than months or years — `defaultX509SvidTTL = "30m"` in `spire.tf`, reduced from an earlier `2h`.
 
-<details>
-<summary>Show screenshot</summary>
+An earlier screenshot sat here showing a four-hour window, captured before that reduction. It was removed rather than left in place: a stale screenshot that contradicts the configuration it is supposed to demonstrate is worse than no screenshot, because a reader has no way to tell which one is current.
 
-![Real SVID certificate: SPIFFE SAN + short validity](docs/images/03-real-svid-certificate.png)
-
-</details>
 
 
 <details>
@@ -384,12 +380,6 @@ Service B tore down the connection during the TLS handshake itself, before the H
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 
-<details>
-<summary>Show screenshot</summary>
-
-![evidence](docs/images/25b-final-negative-test-identity-spoofing.png)
-
-</details>
 
 ## Bonus Challenge 1: Workload Attestation
 
