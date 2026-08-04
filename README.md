@@ -327,7 +327,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 | 6 | SPIRE fallback catch-all identity | ✅ Disabled |
 | 7 | Istio mesh-level vs. application-level mTLS | 🔵 Architectural, accepted |
 | 8 | Hardcoded egress IP in `NetworkPolicy` | 🔵 Accepted trade-off |
-| 9 | Local `terraform.tfstate` stored unencrypted | 🔵 Accepted trade-off |
+| 9 | Local `terraform.tfstate` stored unencrypted | ✅ Resolved by item 20 |
 | 10 | `ClusterSPIFFEID` missing `className`/`federatesWith` (masked until cluster restart) | ✅ Fixed |
 | 11 | Go dependencies pinned via `go.mod`/`go.sum` | ✅ Applied |
 | 12 | `automountServiceAccountToken` disabled on service-a/service-b | ✅ Applied |
@@ -338,6 +338,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 | 17 | AKS control-plane audit logging absent entirely | ✅ Enabled |
 | 18 | Two public LoadBalancers with no source restriction | ✅ Restricted / removed |
 | 19 | AKS authenticates via local accounts, no Entra ID | ⛔ Evaluated, not applied |
+| 20 | Remote encrypted state backends with locking | ✅ Applied |
 
 ### 1. Pod `securityContext` hardening
 
@@ -632,6 +633,62 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > benefit. Named as a real finding with the remediation path rather than quietly omitted, so anyone
 > rebuilding from this repository starts from the secure configuration instead of inheriting the
 > default.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 20. Remote encrypted state backends with locking
+
+> [!TIP]
+> **Applied — this closes item 9, which had been accepted as a trade-off.** State was local,
+> unencrypted, single-generation and unlocked. The Azure state was confirmed by inspection to
+> contain `kube_config_raw`, `client_certificate`, `client_key` and `admin_password`: complete
+> cluster administration in clear text on one laptop.
+>
+> Worth stating why that cannot be fixed with a setting: Terraform state records every attribute
+> of every managed resource, including computed sensitive values the provider returns on its own.
+> There is no way to instruct Terraform to manage a resource but omit an attribute from state, and
+> `sensitive = true` only suppresses CLI output. The only real fixes are moving state somewhere
+> encrypted and access-controlled, or making the credential itself worthless (which is what item 19
+> would do: with local accounts disabled, `kube_config` alone no longer authenticates).
+>
+> **AWS**: S3 bucket with versioning, SSE-S3 encryption, all four public-access blocks enabled, and
+> a bucket policy denying any request where `aws:SecureTransport` is false. Locking via
+> `use_lockfile = true` — S3-native conditional writes, available from Terraform 1.10, so no
+> DynamoDB table is required.
+>
+> **Azure**: storage account with TLS 1.2 minimum, public blob access disabled, encryption at rest,
+> and blob versioning. Authentication via `use_azuread_auth = true` and a Storage Blob Data
+> Contributor role assignment rather than the account access key — the key would be exactly the kind
+> of long-lived shared secret this project exists to avoid. Note that Azure separates control plane
+> from data plane: subscription Owner does not grant blob data access, the role assignment is
+> required explicitly.
+>
+> Two bootstrap decisions that are easy to get wrong. Both backends are created **manually, outside
+> Terraform**: a bucket holding the state of a configuration cannot be managed by that same
+> configuration. And the Azure storage account lives in a **separate resource group**, not
+> `rg-bridge-the-gap` — Terraform manages that resource group, so `terraform destroy` would delete
+> everything inside it, including a storage account holding the state file the destroy is reading
+> from. Terraform would delete its own state mid-operation.
+>
+> Verified at five points per cloud rather than trusting the migration: resource count matched
+> exactly (51 AWS, 29 Azure), `terraform state list` diffed identically against a pre-migration
+> inventory, the state object was confirmed present and server-side encrypted in both backends,
+> the local state files were confirmed truncated to zero bytes, and `terraform plan` from the remote
+> backend returned "No changes" on both. The Azure migration additionally showed
+> `Acquiring state lock` / `Releasing state lock`, functionality that did not exist before. The
+> authenticated cross-cloud call was re-tested afterwards and still returns 200: state moved, live
+> infrastructure untouched.
+>
+> **One thing migration does not do, found by looking rather than assuming.** Moving state leaves
+> every historical plaintext copy exactly where it was. Immediately after a clean migration,
+> `terraform.tfstate.backup` in both directories still held the full credential set. Those were
+> deleted, and `terraform plan` was re-run afterwards to prove nothing depended on them. The
+> pre-migration safety copies taken outside the repository remain until teardown, deliberately, as
+> the rollback path; they are removed as part of the teardown steps below.
+>
+> The habit this replaces, stated for anyone reading this as a template: configure the backend before
+> the first `terraform apply`, not after. Ten lines up front means plaintext local state never exists
+> and there is nothing to migrate or clean up later.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
