@@ -96,7 +96,13 @@ the repository and enforced nothing.
 
 ## Architecture
 
+<details>
+<summary>Show screenshot</summary>
+
 ![Cross-cloud architecture overview](docs/images/01-architecture-overview.jpg)
+
+</details>
+
 
 *Two independent Kubernetes clusters (EKS on AWS, AKS on Azure), each running its own SPIRE Server/Agent pair. The two trust domains federate over a dedicated LoadBalancer endpoint (bundle exchange, ~75s), so each side validates the other's workload certificates without a shared root CA.*
 
@@ -133,9 +139,14 @@ All identities are X.509-SVIDs with short TTLs, rotated automatically by SPIRE. 
 
 **Proof from SPIRE itself** (registration entries: what SPIRE is actually configured to issue, not just what the application logs claim):
 
-![AWS SPIRE registration entries](docs/images/02a-spire-entries-aws.png)
+<details>
+<summary>Show 2 screenshots</summary>
 
+![AWS SPIRE registration entries](docs/images/02a-spire-entries-aws.png)
 ![Azure SPIRE registration entries](docs/images/02b-spire-entries-azure.png)
+
+</details>
+
 
 Both sides show `FederatesWith: <the other cloud's trust domain>` on every entry. That's SPIRE's own record of the federation relationship, not something asserted only in application code.
 
@@ -160,7 +171,13 @@ kubectl exec -n spire-server spire-server-0 -c spire-server -- /opt/spire/bin/sp
 
 **Proof of automatic, periodic bundle refresh** (not a one-time static exchange; this is what makes the trust relationship dynamic rather than a shared secret):
 
+<details>
+<summary>Show screenshot</summary>
+
 ![SPIRE bundle refresh log evidence, ~75s interval](docs/images/02d-bundle-refresh-evidence.png)
+
+</details>
+
 
 <details>
 <summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
@@ -185,7 +202,13 @@ The practical effect: Service B's SPIRE server trusts AWS's root CA (and can the
 
 ## How Authentication Works
 
+<details>
+<summary>Show screenshot</summary>
+
 ![Identity issuance and authorization flow](docs/images/01b-identity-and-authz-flow.jpg)
+
+</details>
+
 
 *Service A's go-spiffe client fetches its SVID from the local SPIRE Agent over the Workload API and pins Service B's exact SPIFFE ID via `AuthorizeID` before the mTLS handshake. On Service B, the caller's SPIFFE ID plus the requested path/method are handed to an OPA sidecar, which returns allow/deny before the request reaches the application handler.*
 
@@ -209,7 +232,13 @@ The initial plan was to let Envoy terminate mTLS for this call, using Istio's SP
 
 **The real certificate served by Service B**, extracted directly from the network, not from application code or logs. Note the SPIFFE URI in the Subject Alternative Name and a short validity window (currently configured via `defaultX509SvidTTL = "30m"` in `spire.tf`, reduced from an earlier `2h` value), not months or years:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![Real SVID certificate: SPIFFE SAN + short validity](docs/images/03-real-svid-certificate.png)
+
+</details>
+
 
 <details>
 <summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
@@ -231,11 +260,23 @@ Service B identity: spiffe://azure.bridgethegap.local/ns/workloads/sa/service-b
 
 Calling through Service A's test endpoint (which triggers the outbound mTLS call to Service B): `/hello` succeeds, and the restricted `/admin` path is denied by the OPA policy for the same authenticated identity.
 
+<details>
+<summary>Show screenshot</summary>
+
 ![/hello succeeds (200), /admin denied (403)](docs/images/04-hello-success.png)
+
+</details>
+
 
 OPA's decision log for those same two requests, showing the actual input evaluated (caller identity, path, method) and the resulting decision:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![OPA decision log: result=true for /hello, result=false for /admin](docs/images/05-opa-decision-logs.png)
+
+</details>
+
 
 <details>
 <summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
@@ -253,7 +294,13 @@ kubectl logs -n workloads -l app=service-b -c opa --tail=10
 
 **Negative test (completion criterion #4):** a client presenting no certificate at all is rejected during the TLS handshake itself, before any HTTP request is even processed. Re-verified live: `curl` consistently fails with `Recv failure: Connection reset by peer`, reproduced identically over both the external LoadBalancer IP and the internal ClusterIP, and independent of TLS version (1.2 forced vs 1.3 default) - ruling out the network path or protocol negotiation as the cause. The rejection is enforced by the application's own mTLS server (`tlsconfig.MTLSServerConfig`, `ClientAuth: RequireAndVerifyClientCert`), not by the network layer. Identity isn't optional here. The connection can't be established at all without it, let alone reach the authorization layer.
 
+<details>
+<summary>Show screenshot</summary>
+
 ![Negative test: no client certificate, connection reset by peer](docs/images/06-negative-test-no-identity.png)
+
+</details>
+
 
 <details>
 <summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
@@ -305,7 +352,13 @@ call to service-b failed: Get "https://<service-b-ip>:8080/hello": read tcp <imp
 
 Service B tore down the connection during the TLS handshake itself, before the HTTP request was ever processed by the application or OPA. Note: Service B's own log at this exact moment is mixed with unrelated load-balancer health-check probes, which produce generic TLS `EOF` entries indistinguishable from this specific rejection - so the imposter's own error is the reliable evidence here, not a server-side log line. This confirms `tlsconfig.AuthorizeID` enforces the exact expected SPIFFE ID, not merely "any valid SPIRE-issued certificate": a real, SPIRE-issued identity with the wrong ServiceAccount is still rejected.
 
+<details>
+<summary>Show screenshot</summary>
+
 ![Identity spoofing test: valid but wrong SPIFFE ID rejected, connection reset by peer](docs/images/07-identity-spoofing-rejected.png)
+
+</details>
+
 
 </details>
 
@@ -323,7 +376,13 @@ This mechanism was chosen over cloud-metadata-based attestation (like AWS/Azure 
 
 Implemented and verified (see "Proof" above). `/hello` is allowed for `service-a`'s exact SPIFFE identity, `/admin` is denied unconditionally. Enforcement is via an **OPA sidecar** (Policy Decision Point) plus a Go middleware in Service B (Policy Enforcement Point), rather than an Istio `AuthorizationPolicy`. That's a direct consequence of the architecture decision above: Envoy doesn't terminate this port's mTLS, so it can't see the HTTP path to apply an `AuthorizationPolicy` against. That enforcement point would be a structural no-op given how this hop is secured. OPA was chosen specifically because the assignment names it as a valid alternative mechanism to Istio-native authorization.
 
+<details>
+<summary>Show screenshot</summary>
+
 ![Authorization re-verified: /hello allowed (200), /admin denied (403)](docs/images/18-authz-allow-hello-deny-admin.png)
+
+</details>
+
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
@@ -390,24 +449,23 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 ### 1. Pod `securityContext` hardening
 
-<details>
-<summary>Evidence and reasoning</summary>
-
 
 > [!TIP]
 > **Applied.** `service-a`, `service-b`, and their containers were updated with `readOnlyRootFilesystem: true`, `allowPrivilegeEscalation: false`, `runAsNonRoot: true`, `runAsUser: 65532` (the numeric UID of the distroless `nonroot` user), `seccompProfile.type: RuntimeDefault`, and `capabilities.drop: [ALL]`. Verified live on both clusters (`kubectl get pod -o jsonpath` showing the applied `securityContext`) and functionally (a real authenticated call to `/call-service-b` still returns `200` after the change).
+
+<details>
+<summary>Show 3 screenshots</summary>
 
 ![service-a securityContext: runAsNonRoot, runAsUser 65532, capabilities dropped](docs/images/08a-securitycontext-service-a.png)
 ![service-b securityContext: runAsNonRoot, runAsUser 65532, capabilities dropped](docs/images/08b-securitycontext-service-b.png)
 ![Authenticated call still returns 200 after hardening applied](docs/images/11-functional-check-post-hardening.png)
 
-
 </details>
 
-### 2. Pod Security Admission `restricted` label
 
-<details>
-<summary>Evidence and reasoning</summary>
+
+
+### 2. Pod Security Admission `restricted` label
 
 
 > [!IMPORTANT]
@@ -415,61 +473,69 @@ After the core requirements above were met, a follow-up pass audited the platfor
 >
 > **Update:** also tested the `baseline` profile (the permissive middle tier between no PSA and `restricted`) directly against the live namespace, in case it offered a usable floor. It fails for the identical reason: `baseline` also disallows adding capabilities beyond a container's default set, and `istio-init` still needs `NET_ADMIN`/`NET_RAW`. Confirmed live: labeling the namespace `pod-security.kubernetes.io/enforce=baseline` and forcing a rollout produced `FailedCreate` events quoting exactly that capability violation; the label was removed immediately and the rollout completed normally afterward, with zero lasting impact (PSA only gates admission of *new* pods, not already-running ones). This confirms the incompatibility is with classic `istio-init`-based sidecar injection itself, at any PSA enforcement level, not specifically with `restricted`'s stricter rules. The real fix would be switching to Istio's CNI-based sidecar injection plugin, which removes the need for a privileged init container entirely; that's a valid direction for future work, not something done here.
 
-![istio-init securityContext: runAsUser 0, capabilities add NET_ADMIN and NET_RAW](docs/images/09-psa-restricted-blocked-evidence.png)
+<details>
+<summary>Show screenshot</summary>
 
+![istio-init securityContext: runAsUser 0, capabilities add NET_ADMIN and NET_RAW](docs/images/09-psa-restricted-blocked-evidence.png)
 
 </details>
 
-### 3. SPIRE agent kubelet certificate verification
 
-<details>
-<summary>Evidence and reasoning</summary>
+
+
+### 3. SPIRE agent kubelet certificate verification
 
 
 > [!IMPORTANT]
 > **Attempted live, reverted after a contained failure.** The current setting (`workloadAttestors.k8s.verification.type: skip`) does not verify the kubelet's serving certificate when the agent attests workloads — a real, if narrow, local-trust gap. Switching to `auto` was tested live on one AWS node; the `gather-host-cert` init container failed because that node's kubelet serving certificate has no `localhost` SAN, blocking `spire-agent` from starting. The failure was contained to a single node (of two), diagnosed with `helm history` / `helm get values` / `helm template`, and fully reverted via `kubectl replace` plus a clean `terraform apply`. Both agents confirmed `1/1 Running` and a real authenticated call confirmed still working before closing this out. Left at `skip` deliberately, to avoid the instability this introduces on the current kubelet certificate setup.
 
-![Both spire-agent pods 1/1 Running on both nodes after revert](docs/images/10-spire-verification-incident-recovery.png)
+<details>
+<summary>Show screenshot</summary>
 
+![Both spire-agent pods 1/1 Running on both nodes after revert](docs/images/10-spire-verification-incident-recovery.png)
 
 </details>
 
-### 4. NetworkPolicy deny-by-default
 
-<details>
-<summary>Evidence and reasoning</summary>
+
+
+### 4. NetworkPolicy deny-by-default
 
 
 > [!TIP]
 > **Applied — after finding enforcement wasn't actually active.** Verification came first: network policy enforcement was not active on either cluster despite the underlying CNI plugins/CRDs being present. On AWS, a test `NetworkPolicy` produced zero `PolicyEndpoint` objects from the VPC CNI's network policy agent, proving policies were silently ignored (`ENABLE_NETWORK_POLICY` was unset by default). On Azure, `networkPolicy: "none"` on the AKS network profile confirmed no policy engine was installed at all. Fixed both: brought `vpc-cni` under Terraform as a managed EKS addon with `enableNetworkPolicy: true` (see `terraform/aws/eks.tf`), and enabled Azure Network Policy Manager on AKS via `az aks update --network-policy azure` (a real node pool reimage, accepted deliberately as a contained operation). Applied a default-deny `NetworkPolicy` to `service-a` and `service-b`, with explicit allows only for DNS, istiod, and the cross-cloud call itself (`k8s/service-a/networkpolicy.yaml`, `k8s/service-b/networkpolicy.yaml`). Verified twice: the real authenticated call still returns `200` after enforcement went live, and a throwaway pod inside the Azure cluster that could previously reach `service-b`'s internal ClusterIP directly now times out.
 
+<details>
+<summary>Show 2 screenshots</summary>
+
 ![Real authenticated call still returns 200 with NetworkPolicy enforced](docs/images/12-networkpolicy-functional-check.png)
 ![Unauthorized pod blocked from service-b's internal ClusterIP: connection timed out](docs/images/13-networkpolicy-blocks-rogue-access.png)
+
+</details>
+
 
 > **Update:** while wiring up Prometheus (bonus #3), found that this exact `NetworkPolicy` (`service-b-default-deny`) had itself never been brought under Terraform - it existed only as a live, `kubectl apply`-managed object, invisible to `terraform plan`. Imported it into state (`terraform import kubernetes_network_policy_v1.service_b_default_deny workloads/service-b-default-deny`) and added the missing ingress rule for Prometheus to scrape the sidecar's stats endpoint on port 15020 from the `monitoring` namespace, entirely in `terraform/azure/network-policy.tf`. `terraform plan` now shows zero drift on this resource going forward.
 
 
-</details>
 
 ### 5. Kubernetes API server public access
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
 > **Restricted, without touching node-to-control-plane connectivity.** Both Kubernetes API servers were reachable from any IP on the internet (`endpoint_public_access = true` on EKS with no CIDR restriction, no `authorized_ip_ranges` on AKS), authenticated only by IAM/AAD, with no network-layer allowlist. Fixed on both: AWS EKS now runs with `endpoint_private_access = true` (node-to-control-plane traffic automatically uses the private VPC path per AWS's own documented behavior, no VPN/bastion needed since nodes already live in the VPC) plus `public_access_cidrs` restricted to a single admin IP; Azure AKS now has an `api_server_access_profile.authorized_ip_ranges` restricting the public endpoint to the same admin IP (AKS automatically also allows the Standard Load Balancer's own outbound IP, so the node pool cannot lock itself out of its own control plane). Verified on both clusters: `aws eks describe-cluster` / `az aks show` confirm the restriction is live, both node pools stayed `Ready` throughout, and the real cross-cloud authenticated call (`/call-service-b`) still returns `200` after the change.
 
+<details>
+<summary>Show 2 screenshots</summary>
+
 ![API server access restricted: AWS private access enabled + public CIDR allowlist, Azure authorized IP ranges](docs/images/14-api-server-ip-allowlist-confirmed.png)
 ![Cross-cloud authenticated call still returns 200 after API server restriction](docs/images/15-cross-cloud-call-post-ip-restriction.png)
 
-
 </details>
 
-### 6. SPIRE fallback catch-all identity
 
-<details>
-<summary>Evidence and reasoning</summary>
+
+
+### 6. SPIRE fallback catch-all identity
 
 
 > [!TIP]
@@ -477,27 +543,25 @@ After the core requirements above were met, a follow-up pass audited the platfor
 >
 > **Postscript, added after a later incident:** this check was true at the time, but didn't survive a later infrastructure event unrelated to this change. See [item 10](#10-clusterspiffeid-missing-classnamefederateswith-masked-until-cluster-restart) for what actually broke and why.
 
-![spire-server-spire-default no longer present after disabling the fallback identity](docs/images/16-spire-fallback-identity-disabled.png)
+<details>
+<summary>Show screenshot</summary>
 
+![spire-server-spire-default no longer present after disabling the fallback identity](docs/images/16-spire-fallback-identity-disabled.png)
 
 </details>
 
-### 7. Istio mesh-level vs. application-level mTLS
 
-<details>
-<summary>Evidence and reasoning</summary>
+
+
+### 7. Istio mesh-level vs. application-level mTLS
 
 
 > [!NOTE]
 > **Architectural, not a gap.** Istio mTLS is enforced at the sidecar/mesh level for in-mesh traffic, while the cross-cloud federated call between AWS and Azure relies on application-level mTLS via `go-spiffe`, because Istio's SDS does not natively consume SPIRE's federated bundles across two independent control planes. Covered in full detail under [Why application-level mTLS](#why-application-level-mtls-not-an-istio-native-mesh-hop); noted here again for completeness alongside the other trade-offs.
 
 
-</details>
 
 ### 8. Hardcoded egress IP in `NetworkPolicy`
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!NOTE]
@@ -516,12 +580,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > bastion or a stable range rather than a workstation address.
 
 
-</details>
 
 ### 9. Local `terraform.tfstate` stored unencrypted
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!NOTE]
@@ -532,68 +592,48 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > **Why that judgement was wrong, in hindsight:** the cost of standing up a backend was estimated against the wrong baseline. Doing it up front is roughly ten lines in a `backend` block. It only looked expensive because by then it required a state migration, which is a different and larger task than configuring a backend before the first `apply`. Later inspection also showed the exposure was worse than "AKS admin credentials": the Azure state held `kube_config_raw`, `client_certificate`, `client_key` and `admin_password` — complete cluster administration, not a subset. Both backends were subsequently created and the state migrated and verified; see item 20.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 10. `ClusterSPIFFEID` missing `className`/`federatesWith` (masked until cluster restart)
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
 > **Found via a real incident, not a scheduled review — fixed.** After a routine AKS stop/start, `service-b` came back `3/3 Ready` but never bound port 8080. Root cause: `spire-controller-manager` was silently ignoring both `ClusterSPIFFEID` resources we define (`istio-sidecar-reg`, `istio-ingressgateway-reg`) because neither set `.spec.className`, and the controller is configured to skip any CR without one (`handleCRsWithoutClassName: false`) — no error, no log, `spire-server entry show` simply returned zero entries. Fixing that surfaced a second, more serious gap: only the now-disabled fallback catch-all (item 6) had ever had `federatesWith` configured. The real, in-use entries never did. Once `className` was fixed and entries flowed again, `service-a`'s certificate was rejected by `service-b` with `remote error: tls: bad certificate` — the actual cause, from `service-b`'s own logs, was `no X.509 bundle for trust domain "aws.bridgethegap.local"`. In other words, the cross-cloud call had been running on a masked failure mode since the fallback was disabled: it kept working only because SPIRE never needed to re-reconcile the affected entries until this restart forced it to. Fixed by adding `className = "spire-server-spire"` and `federatesWith` (each side listing the other's trust domain) directly to `istio_sidecar_reg` in both `terraform/aws/spire.tf` and `terraform/azure/spire.tf`. Verified: `spire-server entry show` lists live entries with `FederatesWith` populated on both clusters, the real authenticated call returns `200` again, the negative test (no client certificate) is still rejected with `certificate required`, and the `/admin` `AuthorizationPolicy` deny path still returns `403` in OPA's decision log.
 
 
-</details>
 
 ### 11. Go dependencies pinned via `go.mod`/`go.sum`
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
 > **Applied.** Both `service-a` and `service-b`'s `Dockerfile`s ran `go mod init` + `go get github.com/spiffe/go-spiffe/v2@latest` + `go mod tidy` inside the build itself, with no `go.mod`/`go.sum` committed to the repository — meaning every image build could silently resolve a different dependency version, including transitive ones, with zero diff in git to show it happened. Fixed: generated `go.mod`/`go.sum` for both services (pinning `go-spiffe/v2 v2.8.1` and its full transitive dependency graph via `go.sum` hashes), committed both files, and changed the `Dockerfile`s to `COPY go.mod go.sum ./` followed by `go mod download` instead of resolving `@latest` at build time. Verified: both images rebuild cleanly (`docker build --no-cache`) with the pinned dependency set.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 12. `automountServiceAccountToken` disabled on service-a/service-b
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
 > **Applied.** Kubernetes mounts a ServiceAccount JWT token into every pod by default (`automountServiceAccountToken`, unset means `true`), even when the pod never calls the Kubernetes API. Neither `service-a` nor `service-b` needs this: both only speak SPIFFE mTLS to each other and to OPA, never to the Kubernetes API server. An unused token mounted into the pod is unnecessary attack surface if the container is ever compromised - a stolen token could be replayed against the Kubernetes API. Set `automountServiceAccountToken: false` on both pod specs (`k8s/service-a/deployment.yaml`, `k8s/service-b/deployment.yaml`). Verified on both clusters: `kubectl get pod -o jsonpath='{.spec.automountServiceAccountToken}'` returns `false` on both, and the real cross-cloud authenticated call still returns `200` after the rollout.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 13. `PeerAuthentication` STRICT parity across both clouds
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
 > **Applied.** Auditing Istio's own mesh-level mTLS enforcement (distinct from the application-level SPIFFE mTLS covered above) found two separate gaps. First, the AWS cluster had zero `PeerAuthentication` resources at all - with none defined, Istio defaults to `PERMISSIVE` mode, meaning every sidecar in the mesh would accept both mTLS and plaintext connections. Azure, by contrast, already enforced `STRICT` mesh-wide - but that resource had been applied directly via `kubectl` at some point and was never captured in Terraform, the same "apply but never commit" pattern found elsewhere in this project (see the update under item 4). A rebuild from this repository alone would have silently reproduced Azure's mesh in `PERMISSIVE` mode without anyone noticing. Fixed both: added an explicit `PeerAuthentication` (`istio-system/default`, `mtls.mode: STRICT`) as a `kubernetes_manifest` resource on AWS (`terraform/aws/istio-mtls.tf`), and imported Azure's existing live resource into Terraform state under the same file pattern (`terraform/azure/istio-mtls.tf`). Verified on both clusters: `kubectl get peerauthentication -n istio-system default` returns `STRICT` on both, `terraform plan` shows zero drift, and the real cross-cloud authenticated call still returns `200` after both changes.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 14. CI `terraform plan` check had never passed since it was added
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
@@ -627,14 +667,10 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > `className`). All three were found by verifying rather than by reading.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 15. CI OIDC role: `:*` subject wildcard and account-wide `ReadOnlyAccess`
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
@@ -666,14 +702,10 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > a real pull request with the reduced permission set.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 16. GitHub Actions pinned to mutable version tags
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
@@ -705,14 +737,10 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > [SLSA v1.2](https://slsa.dev/spec/v1.2/levels), not claimed as present.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 17. AKS control-plane audit logging absent entirely
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
@@ -744,14 +772,10 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > ingestion works; this does.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 18. Two public LoadBalancers with no source restriction
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
@@ -786,14 +810,10 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > the internet is blocked, not assumed.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 19. AKS authenticates via local accounts, no Entra ID
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!IMPORTANT]
@@ -825,14 +845,10 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > default.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 20. Remote encrypted state backends with locking
-
-<details>
-<summary>Evidence and reasoning</summary>
 
 
 > [!TIP]
@@ -888,7 +904,6 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > and there is nothing to migrate or clean up later.
 
 
-</details>
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
@@ -901,9 +916,6 @@ the cross-cloud call still works with all of them enforced.
 
 ### Resource inventory, checked against the live cloud
 
-<details>
-<summary>Show evidence</summary>
-
 
 Not read from Terraform state, which only records what Terraform believes exists. Each resource was
 queried through the cloud provider's own API or the Kubernetes API. Terraform state holds 51 AWS and
@@ -911,19 +923,37 @@ queried through the cloud provider's own API or the Kubernetes API. Terraform st
 
 **AWS**
 
+<details>
+<summary>Show 3 screenshots</summary>
+
 ![AWS inventory: networking and cluster](docs/images/21a-final-inventory-aws-network-cluster.png)
 ![AWS inventory: identity and registry](docs/images/21b-final-inventory-aws-identity-registry.png)
 ![AWS inventory: platform and mesh policy](docs/images/21c-final-inventory-aws-platform-policy.png)
 
+</details>
+
+
 **Azure**
+
+<details>
+<summary>Show 2 screenshots</summary>
 
 ![Azure inventory: core infrastructure](docs/images/21d-final-inventory-azure-core.png)
 ![Azure inventory: identity and access](docs/images/21e-final-inventory-azure-identity.png)
 
+</details>
+
+
 Cluster-level summary for both clouds, including Kubernetes versions, node instance types and
 Terraform-managed resource counts:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![Both clusters: version, status, nodes, resource counts](docs/images/21-final-infrastructure-inventory.png)
+
+</details>
+
 
 Two things in that inventory are deliberately absent rather than broken. AWS runs no Istio ingress
 gateway: only Azure has one, and it is not in the call path (see the Identities Issued table). And
@@ -931,42 +961,52 @@ the two `aks-managed-*` Helm releases visible on the Azure cluster are excluded 
 because they ship with AKS add-ons rather than from this repository's Terraform.
 
 
-</details>
 
 ### Platform health and federated trust
-
-<details>
-<summary>Show evidence</summary>
 
 
 Both SPIRE servers issuing entries with `FederatesWith` populated, and the periodic bundle exchange
 running in both directions at roughly 75-second intervals. This is what makes the trust relationship
 dynamic rather than a one-time shared secret.
 
+<details>
+<summary>Show 2 screenshots</summary>
+
 ![AWS: pods, SPIRE entries, bundle refresh from Azure](docs/images/22a-final-platform-health-aws.png)
 ![Azure: pods, SPIRE entries, bundle refresh from AWS](docs/images/22b-final-platform-health-azure.png)
 
-
 </details>
 
-### The four completion criteria, re-verified
 
-<details>
-<summary>Show evidence</summary>
+
+
+### The four completion criteria, re-verified
 
 
 **Criteria 1 and 2** — each service's own verified SPIFFE identity from its startup logs, the
 certificate Service B actually serves on the wire, and the authenticated call itself:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![Identities, served certificate, and the authenticated call](docs/images/23-final-authenticated-call-identities.png)
+
+</details>
+
 
 **Criterion 3** — no static credentials. Zero `Secret` objects in either `workloads` namespace, and
 the only volumes mounted into either service are the SPIFFE Workload API socket (ephemeral,
 SPIRE-rotated) and a ConfigMap holding OPA policy text. `automountServiceAccountToken` is disabled
 on both, and SVIDs carry a 30-minute TTL:
 
+<details>
+<summary>Show 2 screenshots</summary>
+
 ![AWS: no Secrets, only SPIFFE socket mounted](docs/images/24a-final-zero-static-credentials-aws.png)
 ![Azure: no Secrets, SPIFFE socket and OPA ConfigMap only](docs/images/24b-final-zero-static-credentials-azure.png)
+
+</details>
+
 
 **Criterion 4** — fails closed, proven two independent ways.
 
@@ -976,122 +1016,170 @@ client answers with an empty `Certificate (11)` and the connection is terminated
 returned at all. This is stronger evidence than an opaque connection reset, because it names the
 exact protocol message where identity is required:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![TLS 1.3 handshake showing Request CERT and termination](docs/images/25a-final-negative-test-no-certificate.png)
+
+</details>
+
 
 A client presenting a certificate that is valid and SPIRE-issued, but carries the wrong identity.
 The imposter runs the same container image against the same target, differing only in its Kubernetes
 ServiceAccount, so it receives a legitimate SVID for `.../sa/imposter-sa`. It is still rejected,
 which proves enforcement is bound to cryptographic identity rather than to the mere presence of TLS:
 
-![Imposter with valid but wrong SPIFFE ID, rejected](docs/images/25b-final-negative-test-identity-spoofing.png)
+<details>
+<summary>Show screenshot</summary>
 
+![Imposter with valid but wrong SPIFFE ID, rejected](docs/images/25b-final-negative-test-identity-spoofing.png)
 
 </details>
 
-### Authorization
 
-<details>
-<summary>Show evidence</summary>
+
+
+### Authorization
 
 
 The same authenticated identity, two paths, two outcomes. Passing the handshake proves who is
 calling; it does not decide what they may do:
 
-![GET /hello allowed 200, GET /admin denied 403](docs/images/26-final-authorization-allow-deny.png)
+<details>
+<summary>Show screenshot</summary>
 
+![GET /hello allowed 200, GET /admin denied 403](docs/images/26-final-authorization-allow-deny.png)
 
 </details>
 
-### Defence layers, all active at once
 
-<details>
-<summary>Show evidence</summary>
+
+
+### Defence layers, all active at once
 
 
 LoadBalancer source ranges restricted to the AWS NAT Gateway EIP only, Istio `PeerAuthentication`
 STRICT on both clusters, `NetworkPolicy` deny-by-default on both workloads, and this machine's own
 public IP deliberately outside every allowlist:
 
-![LB source ranges, PeerAuthentication, NetworkPolicy](docs/images/27-final-defense-layers.png)
+<details>
+<summary>Show screenshot</summary>
 
+![LB source ranges, PeerAuthentication, NetworkPolicy](docs/images/27-final-defense-layers.png)
 
 </details>
 
-### Supply chain and CI/CD
 
-<details>
-<summary>Show evidence</summary>
+
+
+### Supply chain and CI/CD
 
 
 The `terraform-plan` OIDC role with no managed policies attached and an inline policy containing
 exactly the two actions `plan` needs, and a trust condition using exact subjects with no `StringLike`
 wildcard:
 
+<details>
+<summary>Show 2 screenshots</summary>
+
 ![OIDC role: no managed policies, two-action inline policy](docs/images/28a-final-cicd-oidc-permissions.png)
 ![OIDC role: exact trust subjects, no wildcard](docs/images/28b-final-cicd-oidc-trust-condition.png)
+
+</details>
+
 
 Every GitHub Action across all four workflows pinned to a full-length commit SHA, with zero mutable
 tag references remaining:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![All actions pinned to commit SHAs](docs/images/28c-final-cicd-actions-pinned-to-sha.png)
+
+</details>
+
 
 Go dependencies committed and locked by hash rather than resolved at build time:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![go.mod and go.sum committed, no @latest in Dockerfile](docs/images/31-final-go-dependencies-pinned.png)
+
+</details>
+
 
 The CI workflow's full run history. The failures are every run that existed before the fix in item
 14, when the check was present in the repository and validated nothing. The current run proves OIDC
 federation works with no stored credential:
 
-![Workflow history: three failures, then success](docs/images/32-final-ci-workflow-passing.png)
+<details>
+<summary>Show screenshot</summary>
 
+![Workflow history: three failures, then success](docs/images/32-final-ci-workflow-passing.png)
 
 </details>
 
-### Audit logging
 
-<details>
-<summary>Show evidence</summary>
+
+
+### Audit logging
 
 
 The diagnostic setting on the AKS cluster with three log categories enabled. Before it existed, the
 same command returned an empty array:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![AKS diagnostic setting with three categories](docs/images/29a-final-aks-audit-logging-config.png)
+
+</details>
+
 
 And the proof it delivers data rather than merely existing. A ConfigMap was deliberately created and
 immediately deleted; two `kube-audit-admin` records came back from Log Analytics matching both
 operations:
 
-![KQL query returning the audit canary records](docs/images/29b-final-aks-audit-logging-canary.png)
+<details>
+<summary>Show screenshot</summary>
 
+![KQL query returning the audit canary records](docs/images/29b-final-aks-audit-logging-canary.png)
 
 </details>
 
-### State backends
 
-<details>
-<summary>Show evidence</summary>
+
+
+### State backends
 
 
 Both backends with versioning, encryption at rest, and the state object present and server-side
 encrypted:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![S3 and Azure Storage backend configuration and state objects](docs/images/30a-final-remote-state-backends.png)
+
+</details>
+
 
 Local state files truncated to zero bytes, resource counts read from the remote backends, and
 `terraform plan` returning "No changes" against live infrastructure from remote state on both
 clouds:
 
-![Local state emptied, plan clean from remote state](docs/images/30b-final-state-migration-verified.png)
+<details>
+<summary>Show screenshot</summary>
 
+![Local state emptied, plan clean from remote state](docs/images/30b-final-state-migration-verified.png)
 
 </details>
 
-### The one finding left open
 
-<details>
-<summary>Show evidence</summary>
+
+
+### The one finding left open
 
 
 AKS authentication configuration as it stands, recorded rather than fixed for the reasons given in
@@ -1099,10 +1187,15 @@ item 19. `aadProfile: null` means Entra ID is not in the authentication path at 
 `disableLocalAccounts: false` means a local client certificate grants access. RBAC is enabled, but
 the admin kubeconfig maps to `system:masters`, which bypasses it:
 
+<details>
+<summary>Show screenshot</summary>
+
 ![AKS: no Entra integration, local accounts enabled](docs/images/33-final-aks-no-entra-id.png)
 
-
 </details>
+
+
+
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
