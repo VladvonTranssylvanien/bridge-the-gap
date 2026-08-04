@@ -1,4 +1,4 @@
-name: Terraform Plan
+name: Terraform Validate
 
 on:
   pull_request:
@@ -40,9 +40,22 @@ jobs:
         working-directory: terraform/aws
         run: terraform validate
 
-      - name: Terraform plan
-        working-directory: terraform/aws
-        run: terraform plan -no-color -lock=false
+      # `terraform plan` is deliberately NOT run here. This project has no
+      # remote backend (see README, Security Hardening item 9), so CI starts
+      # from empty state. The kubernetes_manifest resources (istio_sidecar_reg,
+      # peer_authentication_strict) require a live Kubernetes API connection at
+      # PLAN time, not apply time, and their provider credentials come from EKS
+      # cluster attributes that are unknown with empty state. Plan therefore
+      # fails with "cannot create REST client: no client config" regardless of
+      # IAM permissions. Verified empirically: every run of this workflow before
+      # this commit failed for exactly that reason.
+      #
+      # What this job does validate: formatting, provider/schema correctness,
+      # and that GitHub Actions OIDC federation to AWS actually works with no
+      # static credentials. Real drift detection requires a remote backend and
+      # is tracked as future work.
+      - name: Verify OIDC federation to AWS (no static credentials)
+        run: aws sts get-caller-identity
 
   plan-azure:
     runs-on: ubuntu-latest
@@ -72,8 +85,8 @@ jobs:
         working-directory: terraform/azure
         run: terraform validate
 
-      - name: Terraform plan
-        working-directory: terraform/azure
-        env:
-          ARM_USE_CLI: "true"
-        run: terraform plan -no-color -lock=false
+      # Same constraint as the AWS job above: no remote backend means empty
+      # state in CI, and the kubernetes_manifest resources require plan-time
+      # Kubernetes API access that cannot exist before the cluster does.
+      - name: Verify OIDC federation to Azure (no static credentials)
+        run: az account show
