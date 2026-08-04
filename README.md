@@ -332,6 +332,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 | 11 | Go dependencies pinned via `go.mod`/`go.sum` | ✅ Applied |
 | 12 | `automountServiceAccountToken` disabled on service-a/service-b | ✅ Applied |
 | 13 | `PeerAuthentication` STRICT parity across both clouds | ✅ Applied |
+| 14 | CI `terraform plan` check had never passed since it was added | ✅ Fixed |
+| 15 | CI OIDC role: `:*` subject wildcard and account-wide `ReadOnlyAccess` | ✅ Restricted |
 
 ### 1. Pod `securityContext` hardening
 
@@ -425,6 +427,75 @@ After the core requirements above were met, a follow-up pass audited the platfor
 
 > [!TIP]
 > **Applied.** Auditing Istio's own mesh-level mTLS enforcement (distinct from the application-level SPIFFE mTLS covered above) found two separate gaps. First, the AWS cluster had zero `PeerAuthentication` resources at all - with none defined, Istio defaults to `PERMISSIVE` mode, meaning every sidecar in the mesh would accept both mTLS and plaintext connections. Azure, by contrast, already enforced `STRICT` mesh-wide - but that resource had been applied directly via `kubectl` at some point and was never captured in Terraform, the same "apply but never commit" pattern found elsewhere in this project (see the update under item 4). A rebuild from this repository alone would have silently reproduced Azure's mesh in `PERMISSIVE` mode without anyone noticing. Fixed both: added an explicit `PeerAuthentication` (`istio-system/default`, `mtls.mode: STRICT`) as a `kubernetes_manifest` resource on AWS (`terraform/aws/istio-mtls.tf`), and imported Azure's existing live resource into Terraform state under the same file pattern (`terraform/azure/istio-mtls.tf`). Verified on both clusters: `kubectl get peerauthentication -n istio-system default` returns `STRICT` on both, `terraform plan` shows zero drift, and the real cross-cloud authenticated call still returns `200` after both changes.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 14. CI `terraform plan` check had never passed since it was added
+
+> [!TIP]
+> **Found while tightening IAM permissions, not by reading the workflow file — fixed.** The
+> `Terraform Plan` workflow was added as a read-only PR gate on infrastructure changes. It had
+> three runs total since being introduced, and **all three failed**. The check existed, appeared
+> in the repository, and validated nothing. This was only discovered because a PR was opened
+> specifically to test whether a tightened IAM policy still allowed `plan` to run: the job failed,
+> but not with `AccessDenied`. It failed with `Failed to construct REST client: no client config`,
+> on both the AWS and Azure jobs, including the Azure one whose permissions had not been touched.
+>
+> Root cause: the `kubernetes_manifest` resources (`istio_sidecar_reg`, `peer_authentication_strict`)
+> require a live connection to the Kubernetes API server at **plan** time, not apply time, and the
+> Kubernetes provider derives its host and token from EKS/AKS cluster attributes. This project has
+> no remote Terraform backend (item 9), so CI starts from empty state, those attributes are unknown,
+> and the provider cannot build a client. No IAM permission can fix that; `plan` was dying before it
+> ever reached an AWS API call.
+>
+> Fixed by scoping the workflow to what it can actually validate without state — `terraform fmt`,
+> `terraform init`, `terraform validate` — plus an explicit verification that GitHub Actions OIDC
+> federation works with no static credentials (`aws sts get-caller-identity`, `az account show`).
+> The workflow was renamed from `Terraform Plan` to `Terraform Validate` so its name matches its
+> behaviour. Verified: the workflow now passes on a real PR, and `sts:GetCallerIdentity` returns
+> `AROAZEUBA6HXEELVABFKU:GitHubActions`, confirming the role was assumed through OIDC rather than
+> through any stored credential.
+>
+> Real drift detection would require a remote encrypted backend (S3+KMS / Azure Storage), which is
+> the same fix item 9 identifies and the same reason it was descoped. Documented as future work
+> rather than claimed as present.
+>
+> This is the third instance of the same failure class in this project: a control that exists on
+> paper but is not actually enforcing anything. See item 4 (NetworkPolicy present but the CNI was
+> silently ignoring it) and item 10 (`ClusterSPIFFEID` resources silently skipped for a missing
+> `className`). All three were found by verifying rather than by reading.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 15. CI OIDC role: `:*` subject wildcard and account-wide `ReadOnlyAccess`
+
+> [!TIP]
+> **Restricted on both axes.** The `terraform-plan` OIDC role was broader than its Azure
+> counterpart in two independent ways, found by comparing the two clouds side by side rather than
+> by reviewing either in isolation.
+>
+> **Trust condition.** The role trusted `StringLike` on
+> `repo:...bridge-the-gap@1317683530:*` — every ref in the repository, including any branch push
+> and any tag. The workflow only ever runs on `pull_request` and `workflow_dispatch` from `main`.
+> Replaced with `StringEquals` on exactly those two subjects, no wildcard. Both use GitHub's
+> immutable numeric owner and repository IDs, so renaming the repo or the account cannot silently
+> transfer trust to someone else.
+>
+> **Permissions.** The role had the AWS-managed `ReadOnlyAccess` policy attached, which grants read
+> across the entire account, including `s3:GetObject`, `ssm:GetParameter` (returning decrypted
+> `SecureString` values) and `dynamodb:GetItem`. None of that is needed. With no remote backend, CI
+> plan resolves only two data sources that make AWS API calls: `aws_caller_identity`
+> (`sts:GetCallerIdentity`) and `aws_availability_zones` (`ec2:DescribeAvailabilityZones`). Every
+> `aws_iam_policy_document` is rendered client-side and makes no call at all. Replaced
+> `ReadOnlyAccess` with an inline policy containing exactly those two actions.
+>
+> By comparison, the Azure side was already correctly scoped: `Reader` on a single resource group,
+> subject restricted to `:pull_request`. The asymmetry is what made the AWS side visible.
+>
+> Verified live, not just in configuration: `aws iam list-attached-role-policies` returns an empty
+> list, `aws iam get-role-policy` returns only the two-action inline policy, `aws iam get-role`
+> shows the two exact subjects with no `StringLike` condition remaining, and the workflow passes on
+> a real pull request with the reduced permission set.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
