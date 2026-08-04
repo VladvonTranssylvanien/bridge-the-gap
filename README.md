@@ -27,6 +27,7 @@ Identity, not secrets. SPIFFE/SPIRE issues it, mutual TLS enforces it, OPA autho
 - [x] Service A (AWS) authenticates to Service B (Azure) across two independent, federated trust domains
 - [x] Zero static credentials anywhere — no API keys, passwords, or long-lived tokens in either cluster
 - [x] Mutual TLS via SPIFFE/SPIRE — cryptographic identity, not network location or shared secrets
+- [x] Istio enforces STRICT mTLS mesh-wide; cross-cloud SPIFFE federation is enforced at the application layer via go-spiffe because Istio SDS does not natively merge federated trust bundles across independent trust domains — documented architectural constraint, not an incomplete implementation. See [Why application-level mTLS](#why-application-level-mtls-not-an-istio-native-mesh-hop).
 - [x] Fails closed — missing identity, or a valid-but-wrong identity, is rejected during the TLS handshake itself
 - [x] **Bonus 1** — Workload attestation (Kubernetes-native, `k8s_psat` + workload attestor)
 - [x] **Bonus 2** — Authorization policy (OPA, default-deny, `/hello` allowed / `/admin` denied)
