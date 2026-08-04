@@ -703,4 +703,27 @@ cd terraform/aws && terraform destroy
 
 Run Azure before AWS if both are torn down in the same session. There's no hard dependency between the two clouds, but Azure's federation bundle endpoint should stop being queried before AWS's SPIRE server is removed, to avoid noisy federation errors during teardown. Cosmetic, not a correctness issue.
 
+State now lives in the remote backends described in item 20, so `destroy` reads from S3 and Azure Storage rather than from any local file. Two consequences worth knowing before running it:
+
+The state backends are **not** destroyed by these commands, and that is intentional. Both were created manually, outside Terraform, precisely so that a `destroy` cannot delete the state it is reading from. The Azure storage account additionally sits in its own resource group (`rg-bridge-the-gap-tfstate`) rather than in `rg-bridge-the-gap`, which Terraform does manage and does delete. After teardown they hold the final state of a fully destroyed configuration and cost a negligible amount; remove them manually only once nothing further is needed from state history:
+
+```bash
+# AWS: empty all object versions first, a versioned bucket cannot be deleted otherwise
+aws s3api delete-objects --bucket bridge-the-gap-tfstate-<account-id> \
+  --delete "$(aws s3api list-object-versions --bucket bridge-the-gap-tfstate-<account-id> \
+  --query '{Objects: Versions[].{Key:Key,VersionId:VersionId}}' --output json)"
+aws s3 rb s3://bridge-the-gap-tfstate-<account-id>
+
+# Azure: the whole bootstrap resource group
+az group delete -n rg-bridge-the-gap-tfstate --yes
+```
+
+The pre-migration safety copies taken before the backend migration still exist outside the repository and still contain the full plaintext credential set, including `kube_config_raw`. They were kept deliberately as the rollback path while the migration was being validated. Once teardown is complete they protect nothing, because every credential in them refers to a resource that no longer exists. Delete them as the final step:
+
+```bash
+rm -rf ~/btg-state-backup-*
+```
+
+Only after that step is the "no unencrypted state on disk" property from item 20 fully true rather than true going forward.
+
 <p align="right"><a href="#top">back to top ↑</a></p>
