@@ -479,8 +479,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > [!NOTE]
 > Each item below is collapsed. The heading tells you what was found and the table above tells you
 > how it ended; expand only the ones you care about. Nothing here was requested by the assignment —
-> this section is a hardening exercise done after the deliverable was complete, and four of these
-> findings are controls that existed in the repository while enforcing nothing.
+> this section is a hardening exercise done after the deliverable was complete.
 
 ### 1. Pod `securityContext` hardening
 
