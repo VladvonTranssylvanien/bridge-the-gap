@@ -117,9 +117,46 @@ resource "aws_iam_role" "github_actions_terraform_plan" {
   }
 }
 
-resource "aws_iam_role_policy_attachment" "github_actions_terraform_plan_readonly" {
-  role       = aws_iam_role.github_actions_terraform_plan.name
-  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+# Least-privilege replacement for the AWS-managed ReadOnlyAccess policy.
+#
+# ReadOnlyAccess grants read on the entire account, including s3:GetObject,
+# ssm:GetParameter (decrypting SecureString values) and dynamodb:GetItem.
+# The plan workflow needs none of that. Because this project has no remote
+# Terraform backend, `terraform plan` in CI starts from empty state: it does
+# not read existing infrastructure, it plans creation of everything. The only
+# AWS API calls it actually makes come from the two data sources that resolve
+# at plan time:
+#
+#   data "aws_caller_identity"    -> sts:GetCallerIdentity
+#   data "aws_availability_zones" -> ec2:DescribeAvailabilityZones
+#
+# Every `data "aws_iam_policy_document"` is rendered client-side by the
+# provider and makes no API call. `data "tls_certificate" "eks_oidc"` depends
+# on an EKS cluster attribute that is unknown with empty state, so it is
+# deferred to apply and never runs during plan.
+#
+# Both actions below require resources = ["*"]: neither supports
+# resource-level permissions in IAM.
+#
+# NOTE: if a remote backend (S3 + DynamoDB) is ever added, plan will start
+# reading real infrastructure and this policy must be expanded to the
+# Describe*/Get*/List* actions for every service in the configuration.
+data "aws_iam_policy_document" "github_actions_plan_minimal" {
+  statement {
+    sid    = "TerraformPlanDataSources"
+    effect = "Allow"
+    actions = [
+      "sts:GetCallerIdentity",
+      "ec2:DescribeAvailabilityZones",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "github_actions_terraform_plan_minimal" {
+  name   = "terraform-plan-minimal"
+  role   = aws_iam_role.github_actions_terraform_plan.id
+  policy = data.aws_iam_policy_document.github_actions_plan_minimal.json
 }
 
 output "github_actions_terraform_plan_role_arn" {
