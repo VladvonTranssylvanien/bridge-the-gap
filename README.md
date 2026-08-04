@@ -655,8 +655,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 >
 > Root cause: the `kubernetes_manifest` resources (`istio_sidecar_reg`, `peer_authentication_strict`)
 > require a live connection to the Kubernetes API server at **plan** time, not apply time, and the
-> Kubernetes provider derives its host and token from EKS/AKS cluster attributes. This project has
-> no remote Terraform backend at the time (item 9, since resolved by item 20), so CI started from empty state, those attributes were unknown, and the provider could not build a client. No IAM permission can fix that; `plan` was dying before it
+> Kubernetes provider derives its host and token from EKS/AKS cluster attributes. This project had no remote Terraform backend at the time (item 9, since resolved by item 20), so CI started from empty state, those attributes were unknown, and the provider could not build a client. No IAM permission can fix that; `plan` was dying before it
 > ever reached an AWS API call.
 >
 > Fixed by scoping the workflow to what it can actually validate without state — `terraform fmt`,
@@ -941,9 +940,7 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > **One thing migration does not do, found by looking rather than assuming.** Moving state leaves
 > every historical plaintext copy exactly where it was. Immediately after a clean migration,
 > `terraform.tfstate.backup` in both directories still held the full credential set. Those were
-> deleted, and `terraform plan` was re-run afterwards to prove nothing depended on them. The
-> pre-migration safety copies taken outside the repository remain until teardown, deliberately, as
-> the rollback path; they are removed as part of the teardown steps below.
+> deleted, and `terraform plan` was re-run afterwards to prove nothing depended on them. The pre-migration safety copies taken outside the repository were kept until teardown, deliberately, as the rollback path. They have since been deleted; see [Infrastructure Teardown](#infrastructure-teardown).
 >
 > The habit this replaces, stated for anyone reading this as a template: configure the backend before
 > the first `terraform apply`, not after. Ten lines up front means plaintext local state never exists
