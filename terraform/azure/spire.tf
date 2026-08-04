@@ -135,6 +135,25 @@ resource "kubernetes_service" "spire_federation" {
       target_port = 8443
     }
     type = "LoadBalancer"
+
+    # Restrict the federation bundle endpoint to the only source that has any
+    # reason to reach it: the AWS cluster's NAT Gateway Elastic IP, which is
+    # the egress address of the AWS SPIRE server fetching this trust bundle.
+    #
+    # Found during a post-delivery audit: this endpoint had no source
+    # restriction at all and was reachable from the entire internet, while
+    # service-b's LoadBalancer next to it was correctly locked to the same
+    # single IP. The trust bundle itself is public information by design (it
+    # is a set of root CA certificates, and the SPIFFE spec permits public
+    # bundle endpoints), so this is not credential exposure. It is unnecessary
+    # attack surface: an internet-reachable service with no legitimate
+    # internet consumer, exposing version information and a DoS target.
+    #
+    # Same fragility as the hardcoded egress IP noted elsewhere in the README:
+    # if the AWS NAT Gateway is recreated with a new EIP, bundle refresh
+    # fails closed and this value must be updated alongside
+    # aws_eip.nat in terraform/aws/network.tf.
+    load_balancer_source_ranges = ["18.157.213.89/32"]
   }
 
   depends_on = [helm_release.spire]

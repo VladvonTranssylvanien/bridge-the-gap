@@ -71,6 +71,22 @@ resource "helm_release" "istio_ingressgateway" {
 
   values = [
     yamlencode({
+      # The mesh ingress gateway ships with a standard Istio install, but
+      # nothing in this project routes through it: the cross-cloud call goes
+      # from Service A straight to service-b's own LoadBalancer, and Kiali is
+      # reached via kubectl port-forward. At the chart default it provisions a
+      # public Azure LoadBalancer with a public IP and no source restriction.
+      #
+      # Found during a post-delivery audit: an internet-facing endpoint with
+      # zero legitimate internet consumers. Rather than bolt source ranges onto
+      # something unused, the exposure is removed entirely by keeping the
+      # gateway internal. The gateway pod, its sidecar and its SPIFFE identity
+      # (istio-ingressgateway-reg) all stay in place, so mesh identity issuance
+      # and Kiali's view of the mesh remain intact - only the public entry
+      # point is gone.
+      service = {
+        type = "ClusterIP"
+      }
       volumeMounts = [
         {
           mountPath = "/run/secrets/workload-spiffe-uds"

@@ -335,6 +335,9 @@ After the core requirements above were met, a follow-up pass audited the platfor
 | 14 | CI `terraform plan` check had never passed since it was added | ✅ Fixed |
 | 15 | CI OIDC role: `:*` subject wildcard and account-wide `ReadOnlyAccess` | ✅ Restricted |
 | 16 | GitHub Actions pinned to mutable version tags | ✅ Pinned to SHA |
+| 17 | AKS control-plane audit logging absent entirely | ✅ Enabled |
+| 18 | Two public LoadBalancers with no source restriction | ✅ Restricted / removed |
+| 19 | AKS authenticates via local accounts, no Entra ID | ⛔ Evaluated, not applied |
 
 ### 1. Pod `securityContext` hardening
 
@@ -529,6 +532,106 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > `grpc`/`x/net` CVE bumps in this project's history were found and applied by hand, not by
 > Dependabot). Those are tracked as future work against
 > [SLSA v1.2](https://slsa.dev/spec/v1.2/levels), not claimed as present.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 17. AKS control-plane audit logging absent entirely
+
+> [!TIP]
+> **Enabled — the cluster had no API server audit trail at all.** An earlier commit in this
+> project's history enabled EKS control-plane logging and the AKS Azure Policy add-on. The AKS half
+> of that pair was incomplete: `az monitor diagnostic-settings list` on the cluster returned an
+> empty array. The `oms_agent` block already shipped container and node telemetry to Log Analytics,
+> which is easy to mistake for coverage, but control-plane audit events travel through a separate
+> Azure Monitor diagnostic setting that did not exist. Every API server call against this cluster
+> since it was built went unrecorded.
+>
+> This compounds with item 19 below rather than standing alone: a static, non-revocable admin
+> credential plus no audit trail means a compromise would be both unattributable and unrecorded.
+> Enabling logging closes the second half of that pair while the first remains an accepted risk.
+>
+> Fixed in `terraform/azure/audit-logging.tf` with an
+> `azurerm_monitor_diagnostic_setting` targeting the existing Log Analytics workspace. Categories
+> chosen deliberately rather than enabling everything: `kube-audit-admin` (all mutating API calls,
+> the "who changed what" record), `kube-apiserver` (to correlate authentication and admission
+> failures), and `guard` (Entra/RBAC authorisation decisions, which emit nothing today but will
+> appear automatically if item 19 is ever addressed). Full `kube-audit` was left off: it duplicates
+> `kube-audit-admin` plus all read traffic, and its cost scales with cluster chatter rather than
+> with security value at this size.
+>
+> **Verified that it produces data, not just that it exists.** A deliberate canary — creating and
+> immediately deleting a ConfigMap at `11:27:53Z` — was followed by a KQL query against the
+> workspace. Two `kube-audit-admin` records came back at `11:27:52.94Z` and `11:27:53.11Z`,
+> matching the create and the delete. Confirming the setting was present would not have proven
+> ingestion works; this does.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 18. Two public LoadBalancers with no source restriction
+
+> [!TIP]
+> **Both closed — found by auditing every LoadBalancer, not just the one in the call path.**
+> `service-b-external` was correctly locked to a single `/32`, the AWS NAT Gateway Elastic IP. Two
+> LoadBalancers sitting beside it in the same cluster had no `loadBalancerSourceRanges` at all and
+> were reachable from the entire internet. The restriction had been applied to the endpoint being
+> thought about, and not to the others.
+>
+> **`spire-server-federation-lb`** serves the SPIFFE trust bundle. Its only legitimate consumer is
+> the AWS SPIRE server fetching that bundle, egressing through the same NAT EIP already allowlisted
+> for `service-b`. The bundle itself is public information by design — it is a set of root CA
+> certificates, and the SPIFFE specification permits public bundle endpoints — so this was not
+> credential exposure. It was unnecessary attack surface: an internet-reachable service with no
+> internet consumer, offering version disclosure and a denial-of-service target. Restricted to the
+> same `/32`.
+>
+> **`istio-ingressgateway`** was worse in one respect and better in another: fully public, and
+> serving nothing. Nothing in this project routes through it — the cross-cloud call goes straight
+> to `service-b`'s own LoadBalancer, and Kiali is reached over `kubectl port-forward`. Rather than
+> attach source ranges to an unused endpoint, the exposure was removed outright by setting the
+> chart's `service.type` to `ClusterIP`. The gateway pod, its sidecar and its SPIFFE identity
+> (`istio-ingressgateway-reg`) all remain, so mesh identity issuance and Kiali's view are
+> unaffected; only the public entry point and its public IP are gone.
+>
+> Verified after applying, in the order that matters: the restriction on the federation endpoint
+> could have broken cross-cloud trust silently. Three consecutive `Bundle refreshed` entries
+> appeared in the AWS SPIRE server log at 75-second intervals after the change, the Azure
+> LoadBalancer list now shows only two services and both carry the `/32`, the ingress gateway pod
+> is still `1/1 Running` with its SPIFFE ID intact, and the authenticated cross-cloud call still
+> returns 200. The allowlisted IP being the correct one is proven by the refresh succeeding while
+> the internet is blocked, not assumed.
+
+<p align="right"><a href="#top">back to top ↑</a></p>
+
+### 19. AKS authenticates via local accounts, no Entra ID
+
+> [!IMPORTANT]
+> **Evaluated, not applied — deliberately, with the lockout risk stated.** Live inspection of the
+> cluster returned `aadProfile: null` and `disableLocalAccounts: false`. Kubernetes RBAC is enabled
+> (`enableRbac: true`), but authentication to the API server does not involve Entra ID at all: it
+> uses a local client certificate, and the admin kubeconfig maps to the `system:masters` group,
+> which bypasses RBAC by definition.
+>
+> The consequences are concrete. There is no MFA and no conditional access on cluster
+> administration. Actions cannot be attributed to a named human. Access cannot be revoked for one
+> person — the only remedy is rotating the cluster's certificates. And the credential itself is
+> `kube_config_raw` inside `terraform.tfstate`, which item 9 already flags as unencrypted and
+> local: complete cluster administration sitting in a plaintext file.
+>
+> **The uncomfortable part, stated plainly:** this is a project whose entire premise is that
+> workloads should authenticate by identity rather than by stored secret. That principle was applied
+> to service-to-service traffic and extended to CI/CD, but not to the management plane of the
+> cluster running it. This is the same failure class as item 6 — an insecure provider default left
+> unoverridden. `azurerm_kubernetes_cluster` requires an explicit
+> `azure_active_directory_role_based_access_control` block to integrate Entra ID; without it the
+> default is local accounts, and the default is what was deployed.
+>
+> The correct fix is that block plus `local_account_disabled = true`, and the order is not optional:
+> Entra integration first, verified access second, local accounts disabled third. Reversed, it locks
+> the operator permanently out of their own cluster. That change was not made here because this
+> infrastructure is being torn down and a two-step change with lockout risk offers no remaining
+> benefit. Named as a real finding with the remediation path rather than quietly omitted, so anyone
+> rebuilding from this repository starts from the secure configuration instead of inheriting the
+> default.
 
 <p align="right"><a href="#top">back to top ↑</a></p>
 
