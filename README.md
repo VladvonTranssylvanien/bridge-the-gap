@@ -307,7 +307,7 @@ kubectl logs -n workloads -l app=service-b -c opa --tail=10
 <summary><strong>Reproduce this proof yourself</strong> (click to expand)</summary>
 
 ```bash
-curl -v -k https://\<service-b-external-ip\>:8080/hello
+curl -v -k https://<service-b-external-ip>:8080/hello
 ```
 
 </details>
@@ -460,6 +460,8 @@ After the core requirements above were met, a follow-up pass audited the platfor
 | 19 | AKS authenticates via local accounts, no Entra ID | ⛔ Evaluated, not applied |
 | 20 | Remote encrypted state backends with locking | ✅ Applied |
 
+> ✅ applied and verified live &nbsp;·&nbsp; ⛔ evaluated or attempted, deliberately not kept, with the reason stated &nbsp;·&nbsp; 🔵 accepted as it stands, with the trade-off named
+
 > [!NOTE]
 > Each item below is collapsed. The heading tells you what was found and the table above tells you
 > how it ended; expand only the ones you care about. Nothing here was requested by the assignment —
@@ -597,8 +599,6 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > **Why that judgement was wrong, in hindsight:** the cost of standing up a backend was estimated against the wrong baseline. Doing it up front is roughly ten lines in a `backend` block. It only looked expensive because by then it required a state migration, which is a different and larger task than configuring a backend before the first `apply`. Later inspection also showed the exposure was worse than "AKS admin credentials": the Azure state held `kube_config_raw`, `client_certificate`, `client_key` and `admin_password` — complete cluster administration, not a subset. Both backends were subsequently created and the state migrated and verified; see item 20.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
 ### 10. `ClusterSPIFFEID` missing `className`/`federatesWith` (masked until cluster restart)
 
 
@@ -630,16 +630,12 @@ After the core requirements above were met, a follow-up pass audited the platfor
 > **Applied.** Kubernetes mounts a ServiceAccount JWT token into every pod by default (`automountServiceAccountToken`, unset means `true`), even when the pod never calls the Kubernetes API. Neither `service-a` nor `service-b` needs this: both only speak SPIFFE mTLS to each other and to OPA, never to the Kubernetes API server. An unused token mounted into the pod is unnecessary attack surface if the container is ever compromised - a stolen token could be replayed against the Kubernetes API. Set `automountServiceAccountToken: false` on both pod specs (`k8s/service-a/deployment.yaml`, `k8s/service-b/deployment.yaml`). Verified on both clusters: `kubectl get pod -o jsonpath='{.spec.automountServiceAccountToken}'` returns `false` on both, and the real cross-cloud authenticated call still returns `200` after the rollout.
 
 
-<p align="right"><a href="#top">back to top ↑</a></p>
-
 ### 13. `PeerAuthentication` STRICT parity across both clouds
 
 
 > [!TIP]
 > **Applied.** Auditing Istio's own mesh-level mTLS enforcement (distinct from the application-level SPIFFE mTLS covered above) found two separate gaps. First, the AWS cluster had zero `PeerAuthentication` resources at all - with none defined, Istio defaults to `PERMISSIVE` mode, meaning every sidecar in the mesh would accept both mTLS and plaintext connections. Azure, by contrast, already enforced `STRICT` mesh-wide - but that resource had been applied directly via `kubectl` at some point and was never captured in Terraform, the same "apply but never commit" pattern found elsewhere in this project (see the update under item 4). A rebuild from this repository alone would have silently reproduced Azure's mesh in `PERMISSIVE` mode without anyone noticing. Fixed both: added an explicit `PeerAuthentication` (`istio-system/default`, `mtls.mode: STRICT`) as a `kubernetes_manifest` resource on AWS (`terraform/aws/istio-mtls.tf`), and imported Azure's existing live resource into Terraform state under the same file pattern (`terraform/azure/istio-mtls.tf`). Verified on both clusters: `kubectl get peerauthentication -n istio-system default` returns `STRICT` on both, `terraform plan` shows zero drift, and the real cross-cloud authenticated call still returns `200` after both changes.
 
-
-<p align="right"><a href="#top">back to top ↑</a></p>
 
 ### 14. CI `terraform plan` check had never passed since it was added
 
